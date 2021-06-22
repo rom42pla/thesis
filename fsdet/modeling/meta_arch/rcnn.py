@@ -9,7 +9,7 @@ import logging
 from detectron2.modeling.backbone import build_backbone
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
-from detectron2.structures import ImageList
+from detectron2.structures import ImageList, Instances, Boxes
 from detectron2.utils.logger import log_first_n
 
 # avoid conflicting with the existing GeneralizedRCNN module in Detectron2
@@ -41,13 +41,13 @@ class GeneralizedRCNN(nn.Module):
         num_channels = len(cfg.MODEL.PIXEL_MEAN)
         pixel_mean = (
             torch.Tensor(cfg.MODEL.PIXEL_MEAN)
-            .to(self.device)
-            .view(num_channels, 1, 1)
+                .to(self.device)
+                .view(num_channels, 1, 1)
         )
         pixel_std = (
             torch.Tensor(cfg.MODEL.PIXEL_STD)
-            .to(self.device)
-            .view(num_channels, 1, 1)
+                .to(self.device)
+                .view(num_channels, 1, 1)
         )
         self.normalizer = lambda x: (x - pixel_mean) / pixel_std
         self.to(self.device)
@@ -133,7 +133,7 @@ class GeneralizedRCNN(nn.Module):
         return losses
 
     def inference(
-        self, batched_inputs, detected_instances=None, do_postprocess=True
+            self, batched_inputs, detected_instances=None, do_postprocess=True
     ):
         """
         Run inference on the given inputs.
@@ -176,7 +176,7 @@ class GeneralizedRCNN(nn.Module):
         if do_postprocess:
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
-                results, batched_inputs, images.image_sizes
+                    results, batched_inputs, images.image_sizes
             ):
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])
@@ -260,7 +260,7 @@ class ProposalNetwork(nn.Module):
 
         processed_results = []
         for results_per_image, input_per_image, image_size in zip(
-            proposals, batched_inputs, images.image_sizes
+                proposals, batched_inputs, images.image_sizes
         ):
             height = input_per_image.get("height", image_size[0])
             width = input_per_image.get("width", image_size[1])

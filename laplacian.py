@@ -12,7 +12,7 @@ import torch
 from torchvision import transforms as T
 from detectron2.data import MetadataCatalog
 from detectron2.data.common import AspectRatioGroupedDataset
-from detectron2.structures import Instances
+from detectron2.structures import Instances, Boxes
 from detectron2.utils import comm
 from tqdm import tqdm
 
@@ -212,7 +212,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
     total = len(dataloader_query)  # inference data loader must have a fixed length
     evaluator.reset()
 
-    logging_interval = 10
+    logging_interval = 100
     num_warmup = min(5, logging_interval - 1, total - 1)
     start_time = time.time()
     total_compute_time = 0
@@ -237,22 +237,35 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
 
     with inference_context(model), torch.no_grad():
         # gets information from support set
-        support_imgs_crops = []
         for img_data in tqdm(dataloader_support.dataset.dataset, desc=f"Getting support features"):
-            img = img_data["image"]  # torch.Size([3, H, W])
+            img = img_data["image"].to(model.device) / 255  # torch.Size([3, H, W])
             boxes, box_labels = img_data["instances"].get_fields()["gt_boxes"].tensor.int(), \
                                 img_data["instances"].get_fields()["gt_classes"]
-            for box, label in zip(boxes, box_labels):
-                # retrieves feature embeddings of each box
-                img_crop = (img[:, box[1]:box[3], box[0]:box[2]] / 255).to(model.device)  # torch.Size([3, H, W])
-                img_crop = img_preprocessing(img_crop)  # torch.Size([3, 224, 224])
-                support_imgs_crops += [img_crop]
-                labels_support += [label]
-                # todo figure out how do the backbone works
-                # features = model.backbone.bottom_up(img_crop.unsqueeze(0))["res5"][0, :, 0, 0].flatten()  # torch.Size([2048])
-        features = resnet18(torch.stack(support_imgs_crops))
-        features = features.view((features.shape[0], -1)).to("cpu")  # torch.Size([B, 512])
-        features_support += [f for f in features]
+            features = model.backbone(img_preprocessing(img.unsqueeze(0)))
+            single_proposal = [
+                Instances(image_size=img.shape[-2:],
+                          objectness_logits=[torch.tensor([0], device=model.device)],
+                          proposal_boxes=Boxes(
+                              torch.tensor([[0, 0, img.shape[-1] - 1, img.shape[-2] - 1]],
+                                           device=model.device)))
+            ]
+            results, _ = model.roi_heads(img_data, features, single_proposal, None)
+            features_support += [results[0].get("box_features")[0].cpu()]
+            labels_support += [box_labels.cpu()]
+        #     print(torch.stack(features_support).shape)
+        #     print(box_labels)
+        #     exit()
+        #     for box, label in zip(boxes, box_labels):
+        #         # retrieves feature embeddings of each box
+        #         img_crop = (img[:, box[1]:box[3], box[0]:box[2]] / 255).to(model.device)  # torch.Size([3, H, W])
+        #         img_crop = img_preprocessing(img_crop)  # torch.Size([3, 224, 224])
+        #         support_imgs_crops += [img_crop]
+        #         labels_support += [label]
+        #         # todo figure out how do the backbone works
+        #         # features = model.backbone.bottom_up(img_crop.unsqueeze(0))["res5"][0, :, 0, 0].flatten()  # torch.Size([2048])
+        # features = resnet18(torch.stack(support_imgs_crops))
+        # features = features.view((features.shape[0], -1)).to("cpu")  # torch.Size([B, 512])
+        # features_support += [f for f in features]
 
         # gets informations from query set
         for idx, inputs in enumerate(dataloader_query):
@@ -276,21 +289,20 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                 for k, v in input.items():
                     if isinstance(v, torch.Tensor):
                         inputs[i][k] = v.to("cpu")
-                img = input["image"]
+                # img = input["image"]
                 for k, v in output.items():
-                    # todo recomputes box features
-                    if isinstance(v, Instances):
-                        boxes = output["instances"].get_fields()["pred_boxes"].tensor.int()
-                        box_features = []
-                        for i_box, box in enumerate(boxes):
-                            # retrieves feature embeddings of each box
-                            img_crop = (img[:, box[1]:box[3], box[0]:box[2]] / 255).to(
-                                model.device)  # torch.Size([3, H, W])
-                            if 0 in img_crop.shape:
-                                img_crop = torch.rand(size=(3, 224, 224), device=model.device)
-                            box_features += [resnet18(img_preprocessing(img_crop.unsqueeze(0))).flatten()]
-                        outputs[i][k].set("box_features", torch.stack(box_features))
-
+                #     if isinstance(v, Instances):
+                #         boxes = output["instances"].get_fields()["pred_boxes"].tensor.int()
+                #         box_features = []
+                #         for i_box, box in enumerate(boxes):
+                #             # retrieves feature embeddings of each box
+                #             img_crop = (img[:, box[1]:box[3], box[0]:box[2]] / 255).to(
+                #                 model.device)  # torch.Size([3, H, W])
+                #             if 0 in img_crop.shape:
+                #                 img_crop = torch.rand(size=(3, 224, 224), device=model.device)
+                #             box_features += [resnet18(img_preprocessing(img_crop.unsqueeze(0))).flatten()]
+                #         outputs[i][k].set("box_features", torch.stack(box_features))
+                #
                     if isinstance(v, torch.Tensor) or isinstance(v, Instances):
                         outputs[i][k] = v.to("cpu")
 
@@ -333,7 +345,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
         f"Predicting labels using LaplacianShot"
     )
     X_q_labels_laplacian = laplacian_shot(X_s_embeddings=torch.stack(features_support),
-                                          X_s_labels=torch.stack(labels_support),
+                                          X_s_labels=torch.stack(labels_support).flatten(),
                                           X_q_embeddings=torch.stack([b
                                                                       for s in outputs_total
                                                                       for b in
