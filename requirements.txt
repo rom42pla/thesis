@@ -1,0 +1,28 @@
+# crucial
+requests~=2.25.1
+numpy~=1.20.3
+scipy~=1.7.0
+torch==1.8.1
+torchvision==0.9.1
+torchaudio==0.8.1
+yacs
+tabulate~=0.8.9
+cloudpickle
+Pillow~=8.2.0
+imagesize
+tensorboard
+opencv-python~=4.5.2.54
+lvis
+fvcore~=0.1.5.post20210617
+git+https://github.com/facebookresearch/detectron2.git
+
+# fancy graphics
+termcolor
+tqdm~=4.61.1
+matplotlib~=3.4.2
+termcolor
+
+
+
+pycocotools~=2.0.2
+pyyaml~=5.4.1
