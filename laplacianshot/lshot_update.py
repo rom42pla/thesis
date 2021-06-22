@@ -75,9 +75,7 @@ def plot_convergence(filename, E_list):
     plt.close('all')
 
 
-def bound_update(args, unary, kernel, bound_lambda, bound_iteration=20, batch=False):
-    """
-    """
+def bound_update(unary, kernel, bound_lambda, bound_iteration=20, batch=False):
     oldE = float('inf')
     Y = normalize(-unary)
     E_list = []
@@ -96,10 +94,6 @@ def bound_update(args, unary, kernel, bound_lambda, bound_iteration=20, batch=Fa
 
         else:
             oldE = E.copy()
-
-    if args.plot_converge:
-      filename = osp.join(args.save_path,'convergence_{}.png'.format(args.arch))
-      plot_convergence(filename,E_list)
 
     l = np.argmax(Y, axis=1)
     return l

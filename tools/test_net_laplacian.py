@@ -146,10 +146,8 @@ def main(args):
         ckpt_file, resume=resume
     )
 
-    # todo figure out how the dataloader works, 'cause some samples are missing
-
     res = LaplacianTrainer.test(cfg, model,
-                                max_iters=10)
+                                max_iters=None)
 
     if comm.is_main_process():
         verify_results(cfg, res)

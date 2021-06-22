@@ -18,14 +18,17 @@ import torch.utils.data.distributed
 from torch.optim.lr_scheduler import MultiStepLR, StepLR, CosineAnnealingLR
 import tqdm
 from scipy.stats import mode
-from utils import configuration
-from lshot_update import bound_update
+
 from numpy import linalg as LA
 import datasets
 import models
 from scipy import sparse
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
+
+from laplacianshot.utils import configuration
+from laplacianshot.lshot_update import bound_update
+
 best_prec1 = -1
 
 
@@ -589,6 +592,23 @@ def lshot_prediction(args, knn, lmd, X, unary, support_label, test_label):
 #     acc, _ = get_accuracy(test_label, out) # Update
     acc = (out == test_label).mean()
     return acc
+
+def lshot_prediction_labels(knn, lmd, X, unary, support_label):
+    W = create_affinity(X, knn)
+    l = bound_update(unary, W, lmd)
+
+    # print(f"knn = {knn}")
+    # print(f"lmd = {lmd}")
+    # print(f"X.shape = {X.shape}")
+    # print(f"unary.shape = {unary.shape}")
+    # print(f"support_label = {support_label}")
+    # print(f"l = {l}")
+
+    out = np.take(support_label, l)
+
+    # print(f"out = {out}")
+
+    return out
 
 def metric_class_type(gallery, query, support_label, test_label, shot, train_mean=None, norm_type='CL2N'):
     if norm_type == 'CL2N':
