@@ -593,20 +593,19 @@ def lshot_prediction(args, knn, lmd, X, unary, support_label, test_label):
     acc = (out == test_label).mean()
     return acc
 
-def lshot_prediction_labels(knn, lmd, X, unary, support_label):
+def lshot_prediction_labels(knn, lmd, X, unary, support_label,
+                            logs: bool = False):
+    assert isinstance(logs, bool)
     W = create_affinity(X, knn)
-    l = bound_update(unary, W, lmd)
+    l = bound_update(unary, W, lmd, logs=logs)
 
     # print(f"knn = {knn}")
     # print(f"lmd = {lmd}")
     # print(f"X.shape = {X.shape}")
     # print(f"unary.shape = {unary.shape}")
     # print(f"support_label = {support_label}")
-    # print(f"l = {l}")
 
     out = np.take(support_label, l)
-
-    # print(f"out = {out}")
 
     return out
 

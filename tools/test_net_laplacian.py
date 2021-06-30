@@ -13,26 +13,27 @@ Therefore, we recommend you to use FsDet as an library and take
 this file as an example of how to use the library.
 You may want to write your own script with your datasets and other customizations.
 """
+import random
 
 import numpy as np
 import torch
+
+random.seed(0)
+np.random.seed(0)
+torch.manual_seed(0)
 
 from fsdet.config import get_cfg, set_global_cfg
 from fsdet.engine import DefaultTrainer, default_argument_parser, default_setup
 
 import detectron2.utils.comm as comm
 import json
-import logging
 import os
-import time
-from collections import OrderedDict
 from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.data import MetadataCatalog
-from detectron2.engine import hooks, launch
+from detectron2.engine import launch
 from fsdet.evaluation import (
     COCOEvaluator, DatasetEvaluators, LVISEvaluator, PascalVOCDetectionEvaluator, verify_results)
 
-from laplacian import LaplacianTrainer, get_embeddings_and_labels
+from laplacian import LaplacianTrainer
 
 
 # class Trainer(DefaultTrainer):
@@ -147,7 +148,10 @@ def main(args):
     )
 
     res = LaplacianTrainer.test(cfg, model,
-                                max_iters=None)
+                                data_augmentation=False,
+                                use_laplacianshot=True,
+                                embeddings_type="embeddings",
+                                max_iters=50)
 
     if comm.is_main_process():
         verify_results(cfg, res)

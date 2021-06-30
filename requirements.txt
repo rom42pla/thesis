@@ -15,6 +15,7 @@ tensorboard
 opencv-python~=4.5.2.54
 lvis
 fvcore~=0.1.5.post20210617
+pandas==1.2.5
 git+https://github.com/facebookresearch/detectron2.git
 
 # ??
@@ -24,6 +25,7 @@ configargparse
 termcolor
 tqdm~=4.61.1
 matplotlib~=3.4.2
+seaborn==0.11.1
 termcolor
 
 

@@ -75,7 +75,9 @@ def plot_convergence(filename, E_list):
     plt.close('all')
 
 
-def bound_update(unary, kernel, bound_lambda, bound_iteration=20, batch=False):
+def bound_update(unary, kernel, bound_lambda, bound_iteration=20, batch=False,
+                 logs: bool = False):
+    assert isinstance(logs, bool)
     oldE = float('inf')
     Y = normalize(-unary)
     E_list = []
@@ -89,7 +91,8 @@ def bound_update(unary, kernel, bound_lambda, bound_iteration=20, batch=False):
         E_list.append(E)
         # print('entropy_energy is ' +repr(E) + ' at iteration ',i)
         if (i > 1 and (abs(E - oldE) <= 1e-6 * abs(oldE))):
-            # print('Converged')
+            if logs:
+                print(f"Converged after {i} iterations")
             break
 
         else:

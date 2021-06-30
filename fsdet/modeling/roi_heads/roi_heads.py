@@ -492,4 +492,6 @@ class StandardROIHeads(ROIHeads):
             )
             # adds boxes' embeddings to the results
             pred_instances[0].set("box_features", box_features[indices])
+            # adds prediction's probabilities to the results
+            pred_instances[0].set("pred_class_logits", pred_class_logits[indices])
             return pred_instances
