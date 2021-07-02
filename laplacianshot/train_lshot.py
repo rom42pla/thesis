@@ -265,6 +265,7 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar', folder='resul
     if is_best:
         shutil.copyfile(folder + '/' + filename, folder + '/model_best.pth.tar')
 
+
 class SmoothCrossEntropy(nn.Module):
     def __init__(self, epsilon: float = 0.):
         super(SmoothCrossEntropy, self).__init__()
@@ -274,6 +275,7 @@ class SmoothCrossEntropy(nn.Module):
         target_probs = torch.full_like(logits, self.epsilon / (logits.shape[1] - 1))
         target_probs.scatter_(1, labels.unsqueeze(1), 1 - self.epsilon)
         return F.kl_div(torch.log_softmax(logits, 1), target_probs, reduction='batchmean')
+
 
 class AverageMeter(object):
     def __init__(self):
@@ -394,7 +396,7 @@ def extract_feature(train_loader, val_loader, model, tag='last'):
                 fc_out_mean = np.concatenate(fc_out_mean, axis=0).mean(0)
             else:
                 fc_out_mean = -1
-            save_pickle(save_dir + '/output_mean.plk', [out_mean,fc_out_mean])
+            save_pickle(save_dir + '/output_mean.plk', [out_mean, fc_out_mean])
         else:
             out_mean, fc_out_mean = load_pickle(save_dir + '/output_mean.plk')
 
@@ -414,6 +416,7 @@ def extract_feature(train_loader, val_loader, model, tag='last'):
         all_info = [out_mean, fc_out_mean, output_dict, fc_output_dict]
         save_pickle(save_dir + '/output.plk', all_info)
         return all_info
+
 
 def extract_feature_tune(train_loader, val_loader, model, tag='best'):
     # return out mean, fcout mean, out feature, fcout features
@@ -440,7 +443,7 @@ def extract_feature_tune(train_loader, val_loader, model, tag='best'):
                 fc_out_mean = np.concatenate(fc_out_mean, axis=0).mean(0)
             else:
                 fc_out_mean = -1
-            save_pickle(save_dir + '/output_mean.plk', [out_mean,fc_out_mean])
+            save_pickle(save_dir + '/output_mean.plk', [out_mean, fc_out_mean])
         else:
             out_mean = load_pickle(save_dir + '/output_mean.plk')[0]
 
@@ -449,14 +452,14 @@ def extract_feature_tune(train_loader, val_loader, model, tag='best'):
             # compute output
             outputs, _ = model(inputs, True)
             outputs = outputs.cpu().data.numpy()
-            for out,label in zip(outputs, labels):
+            for out, label in zip(outputs, labels):
                 output_dict[label.item()].append(out)
         all_info = [out_mean, output_dict]
         save_pickle(save_dir + '/output_tune.plk', all_info)
         return all_info
 
-def get_dataloader(split, aug=False, shuffle=True, out_name=False, sample=None):
 
+def get_dataloader(split, aug=False, shuffle=True, out_name=False, sample=None):
     # sample: iter, way, shot, query
     if aug:
         transform = datasets.with_augment(84, disable_random_resize=args.disable_random_resize, jitter=args.jitter)
@@ -471,7 +474,6 @@ def get_dataloader(split, aug=False, shuffle=True, out_name=False, sample=None):
         loader = torch.utils.data.DataLoader(sets, batch_size=args.batch_size, shuffle=shuffle,
                                              num_workers=args.workers, pin_memory=True)
     return loader
-
 
 
 def warp_tqdm(data_loader):
@@ -535,6 +537,7 @@ def meta_evaluate(data, train_mean, shot):
     cl2n_mean, cl2n_conf = compute_confidence_interval(cl2n_list)
     return un_mean, un_conf, l2n_mean, l2n_conf, cl2n_mean, cl2n_conf
 
+
 def meta_evaluate_tune(data, train_mean, shot):
     cl2n_list = []
     for _ in warp_tqdm(range(args.meta_val_iter)):
@@ -544,6 +547,7 @@ def meta_evaluate_tune(data, train_mean, shot):
         cl2n_list.append(acc)
     cl2n_mean, cl2n_conf = compute_confidence_interval(cl2n_list)
     return cl2n_mean, cl2n_conf
+
 
 def tune_lambda(train_loader, model, log):
     val_loader = get_dataloader('val', aug=False, shuffle=False, out_name=False)
@@ -567,10 +571,16 @@ def tune_lambda(train_loader, model, log):
 
         print(
             'validation lmd={:0.2f}: Best\nfeature\tCL2N\n{}\t{:.4f}({:.4f})\n{}\t{:.4f}({:.4f}))'.format(args.lmd,
-            'GVP 1Shot', *accuracy_info_shot1, 'GVP_5Shot', *accuracy_info_shot5))
+                                                                                                          'GVP 1Shot',
+                                                                                                          *accuracy_info_shot1,
+                                                                                                          'GVP_5Shot',
+                                                                                                          *accuracy_info_shot5))
         log.info(
             'validation lmd={:0.2f}: Best\nfeature\tCL2N\n{}\t{:.4f}({:.4f})\n{}\t{:.4f}({:.4f}))'.format(args.lmd,
-            'GVP 1Shot', *accuracy_info_shot1, 'GVP_5Shot', *accuracy_info_shot5))
+                                                                                                          'GVP 1Shot',
+                                                                                                          *accuracy_info_shot1,
+                                                                                                          'GVP_5Shot',
+                                                                                                          *accuracy_info_shot5))
 
     acc_val_list_1 = np.asarray(acc_val_list_1)
     acc_val_list_5 = np.asarray(acc_val_list_5)
@@ -579,21 +589,31 @@ def tune_lambda(train_loader, model, log):
     best_acc_5 = acc_val_list_5.max()
     best_lmd_5 = lmd_list[acc_val_list_5.argmax()]
 
-    print('Best lambda on validation:\n{:0.2f} with 1 shot acc {:.4f}\n{:0.2f} with 5 shot acc {:.4f}'.format(best_lmd_1, best_acc_1,best_lmd_5, best_acc_5))
-    log.info('Best lambda on validation:\n{:0.2f} with 1 shot acc {:.4f}\n{:0.2f} with 5 shot acc {:.4f}'.format(best_lmd_1, best_acc_1,best_lmd_5, best_acc_5))
+    print(
+        'Best lambda on validation:\n{:0.2f} with 1 shot acc {:.4f}\n{:0.2f} with 5 shot acc {:.4f}'.format(best_lmd_1,
+                                                                                                            best_acc_1,
+                                                                                                            best_lmd_5,
+                                                                                                            best_acc_5))
+    log.info(
+        'Best lambda on validation:\n{:0.2f} with 1 shot acc {:.4f}\n{:0.2f} with 5 shot acc {:.4f}'.format(best_lmd_1,
+                                                                                                            best_acc_1,
+                                                                                                            best_lmd_5,
+                                                                                                            best_acc_5))
 
     return best_lmd_1, best_lmd_5
 
-def lshot_prediction(args, knn, lmd, X, unary, support_label, test_label):
 
+def lshot_prediction(args, knn, lmd, X, unary, support_label, test_label):
     W = create_affinity(X, knn)
     l = bound_update(args, unary, W, lmd)
     out = np.take(support_label, l)
-#     acc, _ = get_accuracy(test_label, out) # Update
+    #     acc, _ = get_accuracy(test_label, out) # Update
     acc = (out == test_label).mean()
     return acc
 
-def lshot_prediction_labels(knn, lmd, X, unary, support_label,
+
+def lshot_prediction_labels(X, unary, support_label,
+                            knn: int = 3, lmd: float = 0.1,
                             logs: bool = False):
     assert isinstance(logs, bool)
     W = create_affinity(X, knn)
@@ -606,8 +626,8 @@ def lshot_prediction_labels(knn, lmd, X, unary, support_label,
     # print(f"support_label = {support_label}")
 
     out = np.take(support_label, l)
-
     return out
+
 
 def metric_class_type(gallery, query, support_label, test_label, shot, train_mean=None, norm_type='CL2N'):
     if norm_type == 'CL2N':
@@ -620,9 +640,9 @@ def metric_class_type(gallery, query, support_label, test_label, shot, train_mea
         query = query / LA.norm(query, 2, 1)[:, None]
 
     if args.proto_rect:
-        eta = gallery.mean(0) - query.mean(0) # shift
-        query = query + eta[np.newaxis,:]
-        query_aug = np.concatenate((gallery, query),axis=0)
+        eta = gallery.mean(0) - query.mean(0)  # shift
+        query = query + eta[np.newaxis, :]
+        query_aug = np.concatenate((gallery, query), axis=0)
         gallery_ = gallery.reshape(args.meta_val_way, shot, gallery.shape[-1]).mean(1)
         gallery_ = torch.from_numpy(gallery_)
         query_aug = torch.from_numpy(query_aug)
@@ -630,9 +650,10 @@ def metric_class_type(gallery, query, support_label, test_label, shot, train_mea
         predict = torch.argmin(distance, dim=1)
         cos_sim = F.cosine_similarity(query_aug[:, None, :], gallery_[None, :, :], dim=2)
         cos_sim = 10 * cos_sim
-        W = F.softmax(cos_sim,dim=1)
-        gallery_list = [(W[predict==i,i].unsqueeze(1)*query_aug[predict==i]).mean(0,keepdim=True) for i in predict.unique()]
-        gallery = torch.cat(gallery_list,dim=0).numpy()
+        W = F.softmax(cos_sim, dim=1)
+        gallery_list = [(W[predict == i, i].unsqueeze(1) * query_aug[predict == i]).mean(0, keepdim=True) for i in
+                        predict.unique()]
+        gallery = torch.cat(gallery_list, dim=0).numpy()
     else:
         gallery = gallery.reshape(args.meta_val_way, shot, gallery.shape[-1]).mean(1)
 
@@ -641,7 +662,7 @@ def metric_class_type(gallery, query, support_label, test_label, shot, train_mea
     distance = LA.norm(subtract, 2, axis=-1)
     test_label = np.array(test_label)
     # with LapLacianShot
-    if args.lshot and args.lmd!=0:
+    if args.lshot and args.lmd != 0:
         knn = args.knn
         lmd = args.lmd
         unary = distance.transpose() ** 2
@@ -667,6 +688,7 @@ def create_affinity(X, knn):
     W = sparse.csc_matrix((data, (row, col)), shape=(N, N), dtype=np.float)
     return W
 
+
 def get_accuracy(L1, L2):
     # Since the labels may be different we utilize the Hungarian method to ensure the map of
     # the original ground truth labeling with the returned labels from our laplacian update which is similar to clustering.
@@ -691,7 +713,8 @@ def get_accuracy(L1, L2):
             if len(Label1) > c[i]:
                 newL2[j] = Label1[c[i]]
 
-    return accuracy_score(L1, newL2),newL2
+    return accuracy_score(L1, newL2), newL2
+
 
 def sample_case(ld_dict, shot):
     # Sample meta task
@@ -717,7 +740,7 @@ def sample_case(ld_dict, shot):
 
 def do_extract_and_evaluate(model, log):
     train_loader = get_dataloader('train', aug=False, shuffle=False, out_name=False)
-    if args.tune_lmd :
+    if args.tune_lmd:
         print('Tuning Lambda')
         best_lmd_1, best_lmd_5 = tune_lambda(train_loader, model, log)
     else:

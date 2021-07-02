@@ -130,6 +130,7 @@ class LaplacianTrainer(DefaultTrainer):
     def test(cls, cfg, model, evaluators=None,
              data_augmentation: bool = False,
              use_laplacianshot: bool = True,
+             proto_rect: bool = True,
              embeddings_type: str = "embeddings",
              max_iters: Optional[int] = None):
         """
@@ -145,6 +146,7 @@ class LaplacianTrainer(DefaultTrainer):
         """
         assert isinstance(data_augmentation, bool)
         assert isinstance(use_laplacianshot, bool)
+        assert isinstance(proto_rect, bool)
         assert isinstance(embeddings_type, str)
         assert embeddings_type in {"embeddings", "probabilities"}
 
@@ -179,6 +181,7 @@ class LaplacianTrainer(DefaultTrainer):
                                              evaluator=evaluator,
                                              data_augmentation=data_augmentation,
                                              use_laplacianshot=use_laplacianshot,
+                                             proto_rect=proto_rect,
                                              embeddings_type=embeddings_type,
                                              max_iters=max_iters)
             results[dataset_name] = results_i
@@ -222,6 +225,7 @@ def normalize_image(img: torch.Tensor, model: torch.nn.Module):
 def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                          use_laplacianshot: bool = True,
                          data_augmentation: bool = False,
+                         proto_rect: bool = True,
                          embeddings_type: str = "embeddings",
                          max_iters: Optional[int] = None):
     """
@@ -272,9 +276,12 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
     ])
 
     X_s_embeddings, X_s_labels = None, None
-    X_q_embeddings = None
+    X_q_embeddings, X_q_labels_pred, X_q_labels_pred_scores, X_q_pred_confidence = None, None, None, None
     with inference_context(model), torch.no_grad():
-        # gets information from support set
+
+        # =======#=======#=======#=======#=======#=======#=======#=======#=======
+        # ======= S U P P O R T
+        # =======#=======#=======#=======#=======#=======#=======#=======#=======
         for img_data in tqdm(dataloader_support.dataset.dataset, desc=f"Getting support features"):
             # retrieves the full image
             img = img_data["image"].to(model.device)  # torch.Size([3, H, W])
@@ -295,32 +302,32 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             # loops over found boxes
             for box_coords in boxes_coords:
                 # crops the image according to box's detection
-                img_boxed = img[:,
-                            int(box_coords[1]): int(box_coords[3]),
-                            int(box_coords[0]): int(box_coords[2])]
+                # img_boxed = img[:,
+                #             int(box_coords[1]): int(box_coords[3]),
+                #             int(box_coords[0]): int(box_coords[2])]
                 # creates the box proposal query for the classification
                 proposal = [
-                    Instances(image_size=img_boxed.shape[-2:],
-                              objectness_logits=[torch.tensor([1], device=model.device)],
+                    Instances(image_size=img.shape[-2:],
+                              # objectness_logits=[torch.tensor([1], device=model.device)],
                               proposal_boxes=Boxes(box_coords.unsqueeze(0)))
                 ]
                 # retrieves embeddings and prediction scores
                 if data_augmentation:
                     for i in range(5):
-                        img_augmented = data_augment(img_boxed)
-                        img_augmented = normalize_image(img=img_augmented, model=model)
+                        img_augmented = normalize_image(img=data_augment(img), model=model)
                         # features = model.backbone(img_preprocessing(img_augmented.unsqueeze(0)))
                         features = model.backbone(img_augmented.unsqueeze(0))
-                        results += [model.roi_heads(img_augmented, features, proposal, None)[0]]
+                        results += [model.roi_heads(img_augmented, features, proposal)[0]]
                 else:
                     # images_folder = join("debug", "images")
                     # if not exists(images_folder):
                     #     os.makedirs(images_folder)
                     # save_image(img_boxed, join(images_folder, f"{img_data['image_id']}_boxed.png"))
                     # features = model.backbone(img_preprocessing(img_boxed.unsqueeze(0)))
-                    img_boxed = normalize_image(img=img_boxed, model=model)
-                    features = model.backbone(img_boxed.unsqueeze(0))
-                    results += [model.roi_heads(img_data, features, proposal, None)[0]]
+                    img = normalize_image(img=img, model=model)
+                    features = model.backbone(img.unsqueeze(0))
+                    results += [model.roi_heads(img_data, features, proposal)[0]]
+
             for result in results:
                 # updates X_s_embeddings
                 features = result[0].get(embeddings_key)[0].unsqueeze(0)
@@ -336,7 +343,9 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     if isinstance(X_s_labels, torch.Tensor) \
                     else labels
 
-        # gets informations from query set
+        # =======#=======#=======#=======#=======#=======#=======#=======#=======
+        # ======= Q U E R Y
+        # =======#=======#=======#=======#=======#=======#=======#=======#=======
         for idx, inputs in enumerate(dataloader_query):
             if idx == num_warmup:
                 start_time = time.time()
@@ -351,20 +360,37 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             # updates X_q_embeddings
             features = torch.stack([b
                                     for s in outputs
-                                    for b in s["instances"].get_fields()[embeddings_key]])
+                                    for b in s["instances"].get_fields()[embeddings_key]]).cpu()
+            labels_pred = torch.stack([b
+                                       for s in outputs
+                                       for b in s["instances"].get_fields()["pred_classes"]]).cpu()
+            labels_pred_scores = torch.stack([b
+                                              for s in outputs
+                                              for b in s["instances"].get_fields()["pred_class_logits"]]).cpu()
+            pred_confidence = torch.stack([b
+                                           for s in outputs
+                                           for b in s["instances"].get_fields()["scores"]]).cpu()
+            labels_pred_scores = F.softmax(labels_pred_scores, dim=0)
             if embeddings_type == "probabilities":
                 features = F.softmax(features, dim=0)
-            features = features.type(torch.half).cpu()
             outputs[0]["instances"].remove("box_features")
             outputs[0]["instances"].remove("pred_class_logits")
+
             X_q_embeddings = torch.cat([X_q_embeddings, features], dim=0) \
                 if isinstance(X_q_embeddings, torch.Tensor) \
                 else features
+            X_q_labels_pred = torch.cat([X_q_labels_pred, labels_pred], dim=0) \
+                if isinstance(X_q_labels_pred, torch.Tensor) \
+                else labels_pred
+            X_q_labels_pred_scores = torch.cat([X_q_labels_pred_scores, labels_pred_scores], dim=0) \
+                if isinstance(X_q_labels_pred_scores, torch.Tensor) \
+                else labels_pred_scores
+            X_q_pred_confidence = torch.cat([X_q_pred_confidence, pred_confidence], dim=0) \
+                if isinstance(X_q_pred_confidence, torch.Tensor) \
+                else pred_confidence
 
             torch.cuda.synchronize()
             total_compute_time += time.time() - start_compute_time
-            # outputs[0]['instances'].get_fields()["pred_classes"][0] = 1
-            # evaluator.process(inputs, outputs)
 
             # cleanses inputs and outputs before collection
             for i, (input, output) in enumerate(zip(inputs, outputs)):
@@ -373,18 +399,6 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                         inputs[i][k] = v.to("cpu")
                 # img = input["image"]
                 for k, v in output.items():
-                    #     if isinstance(v, Instances):
-                    #         boxes = output["instances"].get_fields()["pred_boxes"].tensor.int()
-                    #         box_features = []
-                    #         for i_box, box in enumerate(boxes):
-                    #             # retrieves feature embeddings of each box
-                    #             img_crop = (img[:, box[1]:box[3], box[0]:box[2]] / 255).to(
-                    #                 model.device)  # torch.Size([3, H, W])
-                    #             if 0 in img_crop.shape:
-                    #                 img_crop = torch.rand(size=(3, 224, 224), device=model.device)
-                    #             box_features += [resnet18(img_preprocessing(img_crop.unsqueeze(0))).flatten()]
-                    #         outputs[i][k].set("box_features", torch.stack(box_features))
-                    #
                     if isinstance(v, torch.Tensor) or isinstance(v, Instances):
                         outputs[i][k] = v.to("cpu")
 
@@ -422,11 +436,6 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             total_compute_time_str, total_compute_time / (total - num_warmup), num_devices
         )
     )
-
-    print(
-        f"X_s_embeddings ranges in [{X_s_embeddings.float().min()}, {X_s_embeddings.float().max()}] with mean norm {np.linalg.norm(X_s_embeddings, 2, 1).mean()}")
-    print(
-        f"X_q_embeddings ranges in [{X_q_embeddings.float().min()}, {X_q_embeddings.float().max()}] with mean norm {np.linalg.norm(X_q_embeddings, 2, 1).mean()}")
     # exit()
 
     # evaluates the results
@@ -435,6 +444,9 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
         X_q_labels_laplacian = laplacian_shot(X_s_embeddings=X_s_embeddings,
                                               X_s_labels=X_s_labels,
                                               X_q_embeddings=X_q_embeddings,
+                                              X_q_labels_pred=X_q_labels_pred,
+                                              X_q_pred_confidence=X_q_pred_confidence,
+                                              proto_rect=proto_rect,
                                               knn=None, lambda_factor=None)
         for i, (input, output) in enumerate(zip(inputs_total, outputs_total)):
             # replaces fully connected layer's labels with laplacian's ones
@@ -462,7 +474,8 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
 
 
 def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
-                   X_q_embeddings: torch.Tensor,
+                   X_q_embeddings: torch.Tensor, X_q_labels_pred: torch.Tensor, X_q_pred_confidence: torch.Tensor,
+                   null_label: int = 20,
                    proto_rect: bool = True,
                    knn: int = None, lambda_factor: float = None,
                    logs: bool = True) -> torch.Tensor:
@@ -504,6 +517,36 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
         }
         return METRICS[metric_type]
 
+    def plot_scatterplot(X, labels, X_q=None, title: str = ""):
+        import seaborn as sns
+        import pandas as pd
+        pca = PCA(n_components=2)
+        pca.fit(X)
+
+        df = pd.DataFrame([{
+            "x": x,
+            "y": y,
+            "label": label.item()
+        } for (x, y), label in zip(pca.transform(X), labels)])
+
+        # df = df.groupby("label").mean()
+
+        if X_q is not None:
+            df = df.append(pd.DataFrame([{
+                "x": x,
+                "y": y,
+                "label": "query"
+            } for (x, y) in pca.transform(X_q)]))
+
+        # print(df)
+
+        fig, ax = plt.subplots(1, figsize=[10, 10])
+        sns.scatterplot(x="x", y="y", hue="label", data=df,
+                        palette="Paired", ax=ax).set_title(f"Scatterplot {title.lower()}")
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        plt.savefig(f"scatterplot_{title.lower().replace(' ', '_')}.png")
+
     # # builds the dictionary of labels
     # labels_dict = {label: index for index, label in enumerate(set(X_s_labels.tolist()))}
     # # converts X_s_labels according to the dictionary
@@ -530,68 +573,75 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     # print(Y)
     # y = torch.exp(-a) / torch.dot(torch.ones_like(a).T, torch.exp(-a))
 
-    # gets query's distances from prototypes
-    labels_uniques = X_s_labels[np.sort(np.unique(X_s_labels, return_index=True)[1])]
-    # prototypes = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
-    X_s_embeddings = X_s_embeddings.numpy().astype(float)
-    X_q_embeddings = X_q_embeddings.numpy().astype(float)
+    # converts each tensor to numpy arrays
+    X_s_embeddings, X_s_labels = X_s_embeddings.numpy().astype(float), \
+                                 X_s_labels.numpy().astype(int)
+    X_q_embeddings, X_q_labels_pred, X_q_pred_confidence = X_q_embeddings.numpy().astype(float), \
+                                                           X_q_labels_pred.numpy().astype(int), \
+                                                           X_q_pred_confidence.numpy().astype(float)
+    labels_uniques = X_s_labels[np.unique(X_s_labels, return_index=True)[1]]
 
-    mean = X_s_embeddings.mean()
-    # X_s_embeddings = X_s_embeddings - mean
-    X_s_embeddings = X_s_embeddings - X_s_embeddings.mean()
+    plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
+                     labels=X_s_labels, title=f"before normalization")
+
+    if logs:
+        print(f"X_s_embeddings ranges in [{X_s_embeddings.min()}, {X_s_embeddings.max()}] "
+              f"with mean norm {np.linalg.norm(X_s_embeddings, 2, 1).mean()} before normalization")
+        print(f"X_q_embeddings ranges in [{X_q_embeddings.min()}, {X_q_embeddings.max()}] "
+              f"with mean norm {np.linalg.norm(X_q_embeddings, 2, 1).mean()} before normalization")
+
+    # normalizes the vectors
+    mean = X_s_embeddings.mean(0)
+    X_s_embeddings = X_s_embeddings - mean
     X_s_embeddings = X_s_embeddings / np.linalg.norm(X_s_embeddings, 2, 1)[:, None]
-    # X_q_embeddings = X_q_embeddings - mean
-    X_q_embeddings = X_q_embeddings - X_q_embeddings.mean()
+
+    X_q_embeddings = X_q_embeddings - mean
     X_q_embeddings = X_q_embeddings / np.linalg.norm(X_q_embeddings, 2, 1)[:, None]
 
-    # def plot_scatterplot(X, labels):
-    #     import seaborn as sns
-    #     import pandas as pd
-    #     pca = PCA(n_components=2)
-    #     pca.fit(X)
-    #
-    #     df = pd.DataFrame([{
-    #         "x": x,
-    #         "y": y,
-    #         "label": label.item()
-    #     } for (x, y), label in zip(pca.transform(X), labels)])
-    #
-    #     df = df.groupby("label").mean()
-    #
-    #     fig, ax = plt.subplots(1, figsize=[10, 10])
-    #     sns.scatterplot(x="x", y="y", hue="label", data=df,
-    #                     palette="Paired", ax=ax).set_title(f"Scatterplot of X_s")
-    #     ax.set_xlabel("")
-    #     ax.set_ylabel("")
-    #     plt.savefig("scatterplot.png")
+    if logs:
+        print(f"X_s_embeddings ranges in [{X_s_embeddings.min()}, {X_s_embeddings.max()}] "
+              f"with mean norm {np.linalg.norm(X_s_embeddings, 2, 1).mean()} after normalization")
+        print(f"X_q_embeddings ranges in [{X_q_embeddings.min()}, {X_q_embeddings.max()}] "
+              f"with mean norm {np.linalg.norm(X_q_embeddings, 2, 1).mean()} after normalization")
 
-    # plot_scatterplot(X=X_s_embeddings, labels=X_s_labels)
+    n_queries = len(X_q_embeddings)
 
-    # proto_rect = True
+    plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
+                     labels=X_s_labels, title=f"after normalization")
 
     if proto_rect:
-        # preprocesses the inputs
-        prototypes = X_s_embeddings
-        # X_q_embeddings = X_q_embeddings / np.linalg.norm(X_q_embeddings, 2, 1)[:, None]
+        eta = X_s_embeddings.mean(0) - X_q_embeddings.mean(0)  # shift
+        print(f"eta = {eta} {eta.shape}")
 
-        eta = prototypes.mean(0) - X_q_embeddings.mean(0)  # shift
         X_q_embeddings = X_q_embeddings + eta[np.newaxis, :]
+        X_s_embeddings_original = X_s_embeddings + eta[np.newaxis, :]
 
-        query_aug = np.concatenate((prototypes, X_q_embeddings), axis=0)
-        gallery_ = prototypes.reshape(len(labels_uniques), 2, prototypes.shape[-1]).mean(1)
-        gallery_ = torch.from_numpy(gallery_)
-        query_aug = torch.from_numpy(query_aug)
-        distance = get_metric('cosine')(gallery_, query_aug)
+        query_aug = np.concatenate((X_s_embeddings, X_q_embeddings), axis=0)
+        gallery_ = X_s_embeddings.reshape(len(labels_uniques), 2, X_s_embeddings.shape[-1]).mean(1)
+
+        gallery_, query_aug = torch.from_numpy(gallery_), \
+                              torch.from_numpy(query_aug)
+
+        distance = get_metric("cosine")(gallery_, query_aug)
+
         predict = torch.argmin(distance, dim=1)
-        cos_sim = F.cosine_similarity(query_aug[:, None, :], gallery_[None, :, :], dim=2)
-        cos_sim = 10 * cos_sim
+        cos_sim = F.cosine_similarity(query_aug[:, None, :], gallery_[None, :, :], dim=2) * 10
+
         W = F.softmax(cos_sim, dim=1)
+
         gallery_list = [(W[predict == i, i].unsqueeze(1) * query_aug[predict == i]).mean(0, keepdim=True)
                         for i in predict.unique()]
-        prototypes = torch.cat(gallery_list, dim=0).numpy()
-    else:
-        prototypes = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
 
+        X_s_embeddings = torch.cat(gallery_list, dim=0).numpy()
+        labels_uniques = predict.unique()
+    else:
+        X_s_embeddings_original = copy.deepcopy(X_s_embeddings)
+        X_s_embeddings = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
+
+    # print(F.softmax(X_q_labels_pred_scores, dim=0).shape)
+    # print(X_s_embeddings_original.min(), X_s_embeddings_original.max(), X_s_embeddings_original.shape)
+    # print(X_s_embeddings.min(), X_s_embeddings.max(), X_s_embeddings.shape)
+    # exit()
     # tunes lambda
     if not lambda_factor or not knn:
         lambda_factor_best, knn_best = None, None
@@ -601,16 +651,16 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
         combinations = list(itertools.product(lambda_factors, knns))
         for lambda_factor_try, knn_try in tqdm(combinations,
                                                desc=f"Tuning hyperparameters"):
-            subtract = prototypes[:, None, :] - X_s_embeddings
+            subtract = X_s_embeddings[:, None, :] - X_s_embeddings_original
             distance = np.linalg.norm(subtract, 2, axis=-1)
             unary = distance.transpose() ** 2
 
             labels_pred_train = train_lshot.lshot_prediction_labels(knn=knn_try, lmd=lambda_factor_try,
-                                                                    X=X_s_embeddings, unary=unary,
+                                                                    X=X_s_embeddings_original, unary=unary,
                                                                     support_label=labels_uniques,
                                                                     logs=False)
             from sklearn.metrics import f1_score
-            score = f1_score(y_true=X_s_labels.numpy(), y_pred=labels_pred_train, average="macro")
+            score = f1_score(y_true=X_s_labels, y_pred=labels_pred_train, average="macro")
             if not scores or score > np.max(scores):
                 lambda_factor_best, knn_best = lambda_factor_try, knn_try
             scores += [score]
@@ -623,15 +673,38 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                 f"Found parameters with best score {np.round(np.max(scores), 3)} (worst is {np.round(np.min(scores), 3)}):\n"
                 f"knn = {knn_best}\tlambda_factor = {np.round(lambda_factor_best, 3)}")
 
-    # predicts the labels
-    subtract = prototypes[:, None, :] - X_q_embeddings
-    distance = np.linalg.norm(subtract, 2, axis=-1)
-    unary = distance.transpose() ** 2
+    # gets predictions with null label
+    X_q_null_indices = (X_q_labels_pred == null_label).nonzero()
+    X_q_non_null_indices = (X_q_labels_pred != null_label).nonzero()
 
+    # discards prediction with null label
+    X_q_embeddings, X_q_labels_pred, X_q_pred_confidence = X_q_embeddings[X_q_non_null_indices], \
+                                                           X_q_labels_pred[X_q_non_null_indices], \
+                                                           X_q_pred_confidence[X_q_non_null_indices]
+
+    # leverages fc classification results
+    for i_embedding, (embedding, label, score) in enumerate(zip(X_q_embeddings,
+                                                                X_q_labels_pred,
+                                                                X_q_pred_confidence)):
+        X_q_embeddings[i_embedding] = (1 - score) * embedding + \
+                                      score * X_s_embeddings[label]
+
+    # plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
+    #                  labels=labels_uniques, title=f"after leverage of induction")
+
+    # predicts the labels
     if logs:
         print(f"Predicting {len(X_q_embeddings)} labels with Laplacianshot")
+    distance = np.linalg.norm(X_s_embeddings[:, None, :] - X_q_embeddings, 2, axis=-1)
+    unary = distance.transpose() ** 2
     labels_pred = train_lshot.lshot_prediction_labels(knn=knn, lmd=lambda_factor,
                                                       X=X_q_embeddings, unary=unary,
                                                       support_label=labels_uniques,
                                                       logs=logs)
-    return labels_pred
+
+    # prepares labels for both null and non-null predictions
+    results = np.zeros(n_queries)
+    results[X_q_non_null_indices] = labels_pred
+    results[X_q_null_indices] = null_label
+
+    return torch.from_numpy(results)

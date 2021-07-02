@@ -482,6 +482,7 @@ class StandardROIHeads(ROIHeads):
             proposals,
             self.smooth_l1_beta
         )
+
         if self.training:
             return outputs.losses()
         else:
