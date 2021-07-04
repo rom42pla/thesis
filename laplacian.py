@@ -8,10 +8,13 @@ from os.path import join, exists
 from typing import Dict, Union, Optional, List, Tuple
 from collections import OrderedDict
 import numpy as np
+import pandas as pd
+from sklearn.metrics import f1_score
 
 import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
+from torch import nn
 from torchvision import transforms as T
 
 from detectron2.data import MetadataCatalog
@@ -27,6 +30,7 @@ from fsdet.evaluation import (COCOEvaluator, DatasetEvaluators, LVISEvaluator, P
 
 from pprint import pprint
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 from laplacianshot import train_lshot
 
@@ -498,19 +502,59 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     assert isinstance(proto_rect, bool)
 
     def get_prototypes(embeddings: torch.Tensor, labels: torch.Tensor):
-        prototypes = np.zeros(shape=(len(set(labels.tolist())), embeddings.shape[1]),
-                              dtype=float)
-        counter = np.zeros(shape=(len(set(labels.tolist())),),
-                           dtype=int)
-        for embedding, label in zip(embeddings, labels):
-            prototypes[label] += embedding
-            counter[label] += 1
-        prototypes = prototypes / counter[:, None]
+        prototypes = torch.zeros(size=(len(set(labels.tolist())), embeddings.shape[1]),
+                                 dtype=torch.float)
+        for label in labels.unique():
+            class_indices = (labels == label).nonzero().flatten()
+            prototypes[label] = torch.mean(embeddings[class_indices], 0)
+        return prototypes
+
+    def get_prototypes_rectified(embeddings_s: torch.Tensor, labels_s: torch.Tensor,
+                                 embeddings_q: torch.Tensor, pseudolabels_q: torch.Tensor,
+                                 confidence_q: torch.Tensor,
+                                 most_confident_qs: int = 10, epsilon: int = 10,
+                                 normalize: bool = True):
+        # retrieves base prototypes as mean of the supports
+        base_prototypes = get_prototypes(embeddings=embeddings_s, labels=labels_s)
+
+        # discards unconfident query predictions
+        most_confident_embeddings_q, most_confident_pseudolabels_q = [], []
+        for label in labels_s.unique():
+            class_indices = (pseudolabels_q == label).nonzero().flatten()
+            most_confident_indices = class_indices[torch.sort(confidence_q[class_indices],
+                                                              descending=True)[1][:most_confident_qs]]
+            most_confident_embeddings_q += [embeddings_q[most_confident_indices]]
+            most_confident_pseudolabels_q += [pseudolabels_q[most_confident_indices]]
+        embeddings_q, pseudolabels_q = torch.cat(most_confident_embeddings_q, dim=0), \
+                                       torch.cat(most_confident_pseudolabels_q, dim=0)
+
+        # augments the data with pseudolabeled queries
+        embeddings_augmented, labels_augmented = torch.cat((embeddings_s, embeddings_q), dim=0), \
+                                                 torch.cat((labels_s, pseudolabels_q), dim=0)
+
+        # assigns the prototypes
+        prototypes = torch.zeros_like(base_prototypes)
+        for label in labels_augmented.unique():
+            class_indices = (labels_augmented == label).nonzero().flatten()
+            w = torch.exp(epsilon * F.cosine_similarity(embeddings_augmented[class_indices],
+                                                        base_prototypes[label].expand(len(class_indices), -1),
+                                                        dim=-1)) / \
+                torch.sum(torch.exp(epsilon * F.cosine_similarity(embeddings_augmented[class_indices],
+                                                                  base_prototypes[label].expand(len(class_indices), -1),
+                                                                  dim=-1)))
+            prototypes[label] = torch.sum(w.reshape(-1, 1) * embeddings_augmented[class_indices], dim=0)
+
+        # normalizes the prototypes
+        if normalize:
+            prototypes = (prototypes - torch.mean(embeddings_s, dim=0)) / \
+                         np.linalg.norm(prototypes, 2, 1)[:, None]
+
         return prototypes
 
     def get_metric(metric_type):
         METRICS = {
-            'cosine': lambda gallery, query: 1. - F.cosine_similarity(query[:, None, :], gallery[None, :, :], dim=2),
+            'cosine': lambda gallery, query: 1. - F.cosine_similarity(query[:, None, :], gallery[None, :, :],
+                                                                      dim=2),
             'euclidean': lambda gallery, query: ((query[:, None, :] - gallery[None, :, :]) ** 2).sum(2),
             'l1': lambda gallery, query: torch.norm((query[:, None, :] - gallery[None, :, :]), p=1, dim=2),
             'l2': lambda gallery, query: torch.norm((query[:, None, :] - gallery[None, :, :]), p=2, dim=2),
@@ -518,8 +562,6 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
         return METRICS[metric_type]
 
     def plot_scatterplot(X, labels, X_q=None, title: str = ""):
-        import seaborn as sns
-        import pandas as pd
         pca = PCA(n_components=2)
         pca.fit(X)
 
@@ -538,8 +580,6 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                 "label": "query"
             } for (x, y) in pca.transform(X_q)]))
 
-        # print(df)
-
         fig, ax = plt.subplots(1, figsize=[10, 10])
         sns.scatterplot(x="x", y="y", hue="label", data=df,
                         palette="Paired", ax=ax).set_title(f"Scatterplot {title.lower()}")
@@ -547,51 +587,66 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
         ax.set_ylabel("")
         plt.savefig(f"scatterplot_{title.lower().replace(' ', '_')}.png")
 
-    # # builds the dictionary of labels
-    # labels_dict = {label: index for index, label in enumerate(set(X_s_labels.tolist()))}
-    # # converts X_s_labels according to the dictionary
-    # X_s_labels_encoded = copy.deepcopy(X_s_labels)
-    # for i_label, label in enumerate(X_s_labels):
-    #     X_s_labels_encoded[i_label] = labels_dict[label.item()]
-    # # retrieves prototypes
-    # print(f"Computing prototypes")
-    # m = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels_encoded)
-    # print(f"Computing distances from the {X_q_embeddings.shape[0]} queries to the {m.shape[0]} prototypes")
-    # a = get_distances(embeddings=X_q_embeddings, prototypes=m)
-    # print(f"Initializing Y matrix")
-    # Y = torch.zeros(size=(X_q_embeddings.shape[0], m.shape[0]),
-    #                 dtype=torch.float32, device=X_q_embeddings.device)
-    # for i_query, _ in enumerate(Y):
-    #     Y[i_query] = torch.exp(-a[i_query]) / \
-    #                  torch.dot(torch.ones_like(a[i_query]).T, torch.exp(-a[i_query]))
-    # print(f"Entering main loop")
-    # for _ in range(2):
-    #     for i_query, _ in enumerate(Y):
-    #         Y[i_query] = torch.exp(-a[i_query]) / \
-    #                      torch.dot(torch.ones_like(a[i_query]).T, torch.exp(-a[i_query]))
-    #
-    # print(Y)
-    # y = torch.exp(-a) / torch.dot(torch.ones_like(a).T, torch.exp(-a))
+    def plot_prototypes_difference(prototypes: torch.Tensor, prototypes_rectified: torch.Tensor,
+                                   labels: torch.Tensor):
+        pca = PCA(n_components=2)
+        pca.fit(torch.cat([prototypes, prototypes_rectified], dim=0))
+
+        df_prototypes = pd.DataFrame([{
+            "x": x,
+            "y": y,
+            "label": label.item()
+        } for (x, y), label in zip(pca.transform(prototypes), labels)])
+
+        df_prototypes_rectified = pd.DataFrame([{
+            "x": x,
+            "y": y,
+            "label": label.item()
+        } for (x, y), label in zip(pca.transform(prototypes_rectified), labels)])
+
+        fig, (ax1, ax2) = plt.subplots(2, figsize=[10, 20])
+        sns.scatterplot(x="x", y="y", hue="label", data=df_prototypes,
+                        palette="Paired", ax=ax1).set_title(f"Prototypes as mean of supports")
+        sns.scatterplot(x="x", y="y", hue="label", data=df_prototypes_rectified,
+                        palette="Paired", ax=ax2).set_title(f"Prototypes rectified")
+        for ax in (ax1, ax2):
+            ax.set_xlabel("")
+            ax.set_ylabel("")
+        plt.savefig(f"scatterplot_prototypes_differences.png")
+
+    def plot_distribution(X, title: str = ""):
+        if isinstance(X, torch.Tensor):
+            X = X.numpy()
+
+        # plots the results
+        fig, ax = plt.subplots(1, figsize=[10, 10])
+        sns.displot(x=X, bins=10, ax=ax)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        plt.savefig(f"barplot_{title.lower().replace(' ', '_')}.png")
 
     # converts each tensor to numpy arrays
-    X_s_embeddings, X_s_labels = X_s_embeddings.numpy().astype(float), \
-                                 X_s_labels.numpy().astype(int)
-    X_q_embeddings, X_q_labels_pred, X_q_pred_confidence = X_q_embeddings.numpy().astype(float), \
-                                                           X_q_labels_pred.numpy().astype(int), \
-                                                           X_q_pred_confidence.numpy().astype(float)
-    labels_uniques = X_s_labels[np.unique(X_s_labels, return_index=True)[1]]
+
+    # X_s_embeddings, X_s_labels = X_s_embeddings.numpy().astype(float), \
+    #                              X_s_labels.numpy().astype(int)
+    # X_q_embeddings, X_q_labels_pred, X_q_pred_confidence = X_q_embeddings.numpy().astype(float), \
+    #                                                        X_q_labels_pred.numpy().astype(int), \
+    #                                                        X_q_pred_confidence.numpy().astype(float)
+    # labels_uniques = X_s_labels[np.unique(X_s_labels, return_index=True)[1]]
 
     plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
                      labels=X_s_labels, title=f"before normalization")
 
+    plot_distribution(X=X_q_pred_confidence, title="Confidence of prediction")
+
     if logs:
-        print(f"X_s_embeddings ranges in [{X_s_embeddings.min()}, {X_s_embeddings.max()}] "
-              f"with mean norm {np.linalg.norm(X_s_embeddings, 2, 1).mean()} before normalization")
-        print(f"X_q_embeddings ranges in [{X_q_embeddings.min()}, {X_q_embeddings.max()}] "
-              f"with mean norm {np.linalg.norm(X_q_embeddings, 2, 1).mean()} before normalization")
+        print(f"X_s_embeddings ranges in [{X_s_embeddings.float().min()}, {X_s_embeddings.float().max()}] "
+              f"with mean norm {np.linalg.norm(X_s_embeddings.float(), 2, 1).mean()} before normalization")
+        print(f"X_q_embeddings ranges in [{X_q_embeddings.float().min()}, {X_q_embeddings.float().max()}] "
+              f"with mean norm {np.linalg.norm(X_q_embeddings.float(), 2, 1).mean()} before normalization")
 
     # normalizes the vectors
-    mean = X_s_embeddings.mean(0)
+    mean = torch.mean(X_s_embeddings, dim=0)
     X_s_embeddings = X_s_embeddings - mean
     X_s_embeddings = X_s_embeddings / np.linalg.norm(X_s_embeddings, 2, 1)[:, None]
 
@@ -599,67 +654,72 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     X_q_embeddings = X_q_embeddings / np.linalg.norm(X_q_embeddings, 2, 1)[:, None]
 
     if logs:
-        print(f"X_s_embeddings ranges in [{X_s_embeddings.min()}, {X_s_embeddings.max()}] "
-              f"with mean norm {np.linalg.norm(X_s_embeddings, 2, 1).mean()} after normalization")
-        print(f"X_q_embeddings ranges in [{X_q_embeddings.min()}, {X_q_embeddings.max()}] "
-              f"with mean norm {np.linalg.norm(X_q_embeddings, 2, 1).mean()} after normalization")
+        print(f"X_s_embeddings ranges in [{X_s_embeddings.float().min()}, {X_s_embeddings.float().max()}] "
+              f"with mean norm {np.linalg.norm(X_s_embeddings.float(), 2, 1).mean()} before normalization")
+        print(f"X_q_embeddings ranges in [{X_q_embeddings.float().min()}, {X_q_embeddings.float().max()}] "
+              f"with mean norm {np.linalg.norm(X_q_embeddings.float(), 2, 1).mean()} before normalization")
 
     n_queries = len(X_q_embeddings)
 
     plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
                      labels=X_s_labels, title=f"after normalization")
 
+    # if proto_rect:
+    #     eta = X_s_embeddings.mean(0) - X_q_embeddings.mean(0)  # shift
+    #     print(f"eta = {eta} {eta.shape}")
+    #
+    #     X_q_embeddings = X_q_embeddings + eta[np.newaxis, :]
+    #     X_s_embeddings_original = X_s_embeddings + eta[np.newaxis, :]
+    #
+    #     query_aug = np.concatenate((X_s_embeddings, X_q_embeddings), axis=0)
+    #     gallery_ = X_s_embeddings.reshape(len(labels_uniques), 2, X_s_embeddings.shape[-1]).mean(1)
+    #
+    #     gallery_, query_aug = torch.from_numpy(gallery_), \
+    #                           torch.from_numpy(query_aug)
+    #
+    #     distance = get_metric("cosine")(gallery_, query_aug)
+    #
+    #     predict = torch.argmin(distance, dim=1)
+    #     cos_sim = F.cosine_similarity(query_aug[:, None, :], gallery_[None, :, :], dim=2) * 10
+    #
+    #     W = F.softmax(cos_sim, dim=1)
+    #
+    #     gallery_list = [(W[predict == i, i].unsqueeze(1) * query_aug[predict == i]).mean(0, keepdim=True)
+    #                     for i in predict.unique()]
+    #
+    #     X_s_embeddings = torch.cat(gallery_list, dim=0).numpy()
+    #     labels_uniques = predict.unique()
+    # else:
+    #     prototypes = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
+
     if proto_rect:
-        eta = X_s_embeddings.mean(0) - X_q_embeddings.mean(0)  # shift
-        print(f"eta = {eta} {eta.shape}")
-
-        X_q_embeddings = X_q_embeddings + eta[np.newaxis, :]
-        X_s_embeddings_original = X_s_embeddings + eta[np.newaxis, :]
-
-        query_aug = np.concatenate((X_s_embeddings, X_q_embeddings), axis=0)
-        gallery_ = X_s_embeddings.reshape(len(labels_uniques), 2, X_s_embeddings.shape[-1]).mean(1)
-
-        gallery_, query_aug = torch.from_numpy(gallery_), \
-                              torch.from_numpy(query_aug)
-
-        distance = get_metric("cosine")(gallery_, query_aug)
-
-        predict = torch.argmin(distance, dim=1)
-        cos_sim = F.cosine_similarity(query_aug[:, None, :], gallery_[None, :, :], dim=2) * 10
-
-        W = F.softmax(cos_sim, dim=1)
-
-        gallery_list = [(W[predict == i, i].unsqueeze(1) * query_aug[predict == i]).mean(0, keepdim=True)
-                        for i in predict.unique()]
-
-        X_s_embeddings = torch.cat(gallery_list, dim=0).numpy()
-        labels_uniques = predict.unique()
+        prototypes = get_prototypes_rectified(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
+                                              embeddings_q=X_q_embeddings, pseudolabels_q=X_q_labels_pred,
+                                              confidence_q=X_q_pred_confidence)
     else:
-        X_s_embeddings_original = copy.deepcopy(X_s_embeddings)
-        X_s_embeddings = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
+        prototypes = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
 
-    # print(F.softmax(X_q_labels_pred_scores, dim=0).shape)
-    # print(X_s_embeddings_original.min(), X_s_embeddings_original.max(), X_s_embeddings_original.shape)
-    # print(X_s_embeddings.min(), X_s_embeddings.max(), X_s_embeddings.shape)
-    # exit()
+    # plot_scatterplot(X=prototypes, X_q=X_q_embeddings,
+    #                  labels=labels_uniques, title=f"after leverage of induction")
+
     # tunes lambda
     if not lambda_factor or not knn:
         lambda_factor_best, knn_best = None, None
         scores = []
-        lambda_factors, knns = np.linspace(start=0.1, stop=2, num=10, endpoint=True), \
-                               np.linspace(start=1, stop=10, num=10, endpoint=True, dtype=int)
+        lambda_factors = [lambda_factor] if lambda_factor \
+            else np.linspace(start=0.1, stop=2, num=10, endpoint=True)
+        knns = [knn] if knn \
+            else np.linspace(start=1, stop=10, num=10, endpoint=True, dtype=int)
         combinations = list(itertools.product(lambda_factors, knns))
         for lambda_factor_try, knn_try in tqdm(combinations,
                                                desc=f"Tuning hyperparameters"):
-            subtract = X_s_embeddings[:, None, :] - X_s_embeddings_original
-            distance = np.linalg.norm(subtract, 2, axis=-1)
+            distance = np.linalg.norm(prototypes[:, None, :] - X_s_embeddings, 2, axis=-1)
             unary = distance.transpose() ** 2
 
             labels_pred_train = train_lshot.lshot_prediction_labels(knn=knn_try, lmd=lambda_factor_try,
-                                                                    X=X_s_embeddings_original, unary=unary,
-                                                                    support_label=labels_uniques,
+                                                                    X=X_s_embeddings.numpy(), unary=unary,
+                                                                    support_label=X_s_labels.unique().numpy(),
                                                                     logs=False)
-            from sklearn.metrics import f1_score
             score = f1_score(y_true=X_s_labels, y_pred=labels_pred_train, average="macro")
             if not scores or score > np.max(scores):
                 lambda_factor_best, knn_best = lambda_factor_try, knn_try
@@ -674,8 +734,8 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                 f"knn = {knn_best}\tlambda_factor = {np.round(lambda_factor_best, 3)}")
 
     # gets predictions with null label
-    X_q_null_indices = (X_q_labels_pred == null_label).nonzero()
-    X_q_non_null_indices = (X_q_labels_pred != null_label).nonzero()
+    X_q_null_indices = (X_q_labels_pred == null_label).nonzero().flatten()
+    X_q_non_null_indices = (X_q_labels_pred != null_label).nonzero().flatten()
 
     # discards prediction with null label
     X_q_embeddings, X_q_labels_pred, X_q_pred_confidence = X_q_embeddings[X_q_non_null_indices], \
@@ -687,19 +747,23 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                                                                 X_q_labels_pred,
                                                                 X_q_pred_confidence)):
         X_q_embeddings[i_embedding] = (1 - score) * embedding + \
-                                      score * X_s_embeddings[label]
+                                      score * prototypes[label]
 
-    # plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
-    #                  labels=labels_uniques, title=f"after leverage of induction")
-
+    plot_scatterplot(X=prototypes,
+                     labels=X_s_labels.unique(), title=f"prototypes")
+    plot_prototypes_difference(prototypes=get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels),
+                                           prototypes_rectified=get_prototypes_rectified(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
+                                              embeddings_q=X_q_embeddings, pseudolabels_q=X_q_labels_pred,
+                                              confidence_q=X_q_pred_confidence),
+                                           labels=X_s_labels.unique())
     # predicts the labels
     if logs:
         print(f"Predicting {len(X_q_embeddings)} labels with Laplacianshot")
-    distance = np.linalg.norm(X_s_embeddings[:, None, :] - X_q_embeddings, 2, axis=-1)
+    distance = np.linalg.norm(prototypes.numpy()[:, None, :] - X_q_embeddings.numpy(), 2, axis=-1)
     unary = distance.transpose() ** 2
     labels_pred = train_lshot.lshot_prediction_labels(knn=knn, lmd=lambda_factor,
                                                       X=X_q_embeddings, unary=unary,
-                                                      support_label=labels_uniques,
+                                                      support_label=X_s_labels.unique().numpy(),
                                                       logs=logs)
 
     # prepares labels for both null and non-null predictions

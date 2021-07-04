@@ -150,9 +150,9 @@ def main(args):
     res = LaplacianTrainer.test(cfg, model,
                                 data_augmentation=False,
                                 use_laplacianshot=True,
-                                proto_rect=False,
+                                proto_rect=True,
                                 embeddings_type="embeddings",
-                                max_iters=100)
+                                max_iters=500)
 
     if comm.is_main_process():
         verify_results(cfg, res)
