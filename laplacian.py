@@ -513,7 +513,7 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                                  embeddings_q: torch.Tensor, pseudolabels_q: torch.Tensor,
                                  confidence_q: torch.Tensor,
                                  most_confident_qs: int = 10, epsilon: int = 10,
-                                 normalize: bool = True):
+                                 add_shifting_term: bool = False, normalize: bool = True):
         # retrieves base prototypes as mean of the supports
         base_prototypes = get_prototypes(embeddings=embeddings_s, labels=labels_s)
 
@@ -527,6 +527,12 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
             most_confident_pseudolabels_q += [pseudolabels_q[most_confident_indices]]
         embeddings_q, pseudolabels_q = torch.cat(most_confident_embeddings_q, dim=0), \
                                        torch.cat(most_confident_pseudolabels_q, dim=0)
+
+        # shifts the queries towards the supports to reduce cross-class bias
+        if add_shifting_term:
+            shifting_term = (torch.sum(embeddings_s, dim=0) / len(embeddings_s)) - \
+                            (torch.sum(embeddings_q, dim=0) / len(embeddings_q))
+            embeddings_q += shifting_term
 
         # augments the data with pseudolabeled queries
         embeddings_augmented, labels_augmented = torch.cat((embeddings_s, embeddings_q), dim=0), \
@@ -625,15 +631,6 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
         ax.set_ylabel("")
         plt.savefig(f"barplot_{title.lower().replace(' ', '_')}.png")
 
-    # converts each tensor to numpy arrays
-
-    # X_s_embeddings, X_s_labels = X_s_embeddings.numpy().astype(float), \
-    #                              X_s_labels.numpy().astype(int)
-    # X_q_embeddings, X_q_labels_pred, X_q_pred_confidence = X_q_embeddings.numpy().astype(float), \
-    #                                                        X_q_labels_pred.numpy().astype(int), \
-    #                                                        X_q_pred_confidence.numpy().astype(float)
-    # labels_uniques = X_s_labels[np.unique(X_s_labels, return_index=True)[1]]
-
     plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
                      labels=X_s_labels, title=f"before normalization")
 
@@ -664,34 +661,6 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     plot_scatterplot(X=X_s_embeddings, X_q=X_q_embeddings,
                      labels=X_s_labels, title=f"after normalization")
 
-    # if proto_rect:
-    #     eta = X_s_embeddings.mean(0) - X_q_embeddings.mean(0)  # shift
-    #     print(f"eta = {eta} {eta.shape}")
-    #
-    #     X_q_embeddings = X_q_embeddings + eta[np.newaxis, :]
-    #     X_s_embeddings_original = X_s_embeddings + eta[np.newaxis, :]
-    #
-    #     query_aug = np.concatenate((X_s_embeddings, X_q_embeddings), axis=0)
-    #     gallery_ = X_s_embeddings.reshape(len(labels_uniques), 2, X_s_embeddings.shape[-1]).mean(1)
-    #
-    #     gallery_, query_aug = torch.from_numpy(gallery_), \
-    #                           torch.from_numpy(query_aug)
-    #
-    #     distance = get_metric("cosine")(gallery_, query_aug)
-    #
-    #     predict = torch.argmin(distance, dim=1)
-    #     cos_sim = F.cosine_similarity(query_aug[:, None, :], gallery_[None, :, :], dim=2) * 10
-    #
-    #     W = F.softmax(cos_sim, dim=1)
-    #
-    #     gallery_list = [(W[predict == i, i].unsqueeze(1) * query_aug[predict == i]).mean(0, keepdim=True)
-    #                     for i in predict.unique()]
-    #
-    #     X_s_embeddings = torch.cat(gallery_list, dim=0).numpy()
-    #     labels_uniques = predict.unique()
-    # else:
-    #     prototypes = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
-
     if proto_rect:
         prototypes = get_prototypes_rectified(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
                                               embeddings_q=X_q_embeddings, pseudolabels_q=X_q_labels_pred,
@@ -699,8 +668,8 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     else:
         prototypes = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
 
-    # plot_scatterplot(X=prototypes, X_q=X_q_embeddings,
-    #                  labels=labels_uniques, title=f"after leverage of induction")
+    plot_scatterplot(X=prototypes, X_q=X_q_embeddings,
+                     labels=X_s_labels, title=f"of prototypes and queries")
 
     # tunes lambda
     if not lambda_factor or not knn:
@@ -749,13 +718,15 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
         X_q_embeddings[i_embedding] = (1 - score) * embedding + \
                                       score * prototypes[label]
 
-    plot_scatterplot(X=prototypes,
-                     labels=X_s_labels.unique(), title=f"prototypes")
+    plot_scatterplot(X=prototypes, X_q=X_q_embeddings,
+                     labels=X_s_labels.unique(), title=f"of prototypes and queries after leverage of induction")
+
     plot_prototypes_difference(prototypes=get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels),
-                                           prototypes_rectified=get_prototypes_rectified(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
-                                              embeddings_q=X_q_embeddings, pseudolabels_q=X_q_labels_pred,
-                                              confidence_q=X_q_pred_confidence),
-                                           labels=X_s_labels.unique())
+                               prototypes_rectified=get_prototypes_rectified(
+                                   embeddings_s=X_s_embeddings, labels_s=X_s_labels,
+                                   embeddings_q=X_q_embeddings, pseudolabels_q=X_q_labels_pred,
+                                   confidence_q=X_q_pred_confidence),
+                               labels=X_s_labels.unique())
     # predicts the labels
     if logs:
         print(f"Predicting {len(X_q_embeddings)} labels with Laplacianshot")
