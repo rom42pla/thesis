@@ -1,6 +1,7 @@
 VERSION: 2
 MODEL:
 #  DEVICE: 'cpu'
+  WEIGHTS: "checkpoints/base.pth"
   META_ARCHITECTURE: "GeneralizedRCNN"
   BACKBONE:
     NAME: "build_resnet_fpn_backbone"

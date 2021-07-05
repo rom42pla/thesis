@@ -28,7 +28,6 @@ from fsdet.config import get_cfg, set_global_cfg
 from fsdet.engine import default_argument_parser, default_setup
 
 import detectron2.utils.comm as comm
-import json
 import os
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.engine import launch
@@ -69,23 +68,22 @@ def main(args):
     )
 
     res = LaplacianTrainer.test(cfg, model,
-                                data_augmentation=False,
                                 use_laplacianshot=True,
-                                proto_rect=True,
+                                rectify_prototypes=True,
                                 embeddings_type="embeddings",
-                                max_iters=50)
+                                max_iters=None)
 
     if comm.is_main_process():
         verify_results(cfg, res)
         # save evaluation results in json
-        os.makedirs(
-            os.path.join(cfg.OUTPUT_DIR, "inference"), exist_ok=True
-        )
-        with open(
-                os.path.join(cfg.OUTPUT_DIR, "inference", "res_final.json"),
-                "w",
-        ) as fp:
-            json.dump(res, fp)
+        # os.makedirs(
+        #     os.path.join(cfg.OUTPUT_DIR, "inference"), exist_ok=True
+        # )
+        # with open(
+        #         os.path.join(cfg.OUTPUT_DIR, "inference", "res_final.json"),
+        #         "w",
+        # ) as fp:
+        #     json.dump(res, fp)
     return res
 
 

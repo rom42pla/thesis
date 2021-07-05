@@ -482,7 +482,7 @@ class DefaultTrainer(SimpleTrainer):
         return build_lr_scheduler(cfg, optimizer)
 
     @classmethod
-    def build_train_loader(cls, cfg, finite: bool = False):
+    def build_train_loader(cls, cfg):
         """
         Returns:
             iterable

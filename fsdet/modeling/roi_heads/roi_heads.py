@@ -2,6 +2,7 @@
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 import logging
 from detectron2.layers import ShapeSpec
@@ -84,18 +85,18 @@ class ROIHeads(torch.nn.Module):
         super(ROIHeads, self).__init__()
 
         # fmt: off
-        self.batch_size_per_image     = cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE
+        self.batch_size_per_image = cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE
         self.positive_sample_fraction = cfg.MODEL.ROI_HEADS.POSITIVE_FRACTION
-        self.test_score_thresh        = cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST
-        self.test_nms_thresh          = cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST
-        self.test_detections_per_img  = cfg.TEST.DETECTIONS_PER_IMAGE
-        self.in_features              = cfg.MODEL.ROI_HEADS.IN_FEATURES
-        self.num_classes              = cfg.MODEL.ROI_HEADS.NUM_CLASSES
-        self.proposal_append_gt       = cfg.MODEL.ROI_HEADS.PROPOSAL_APPEND_GT
-        self.feature_strides          = {k: v.stride for k, v in input_shape.items()}
-        self.feature_channels         = {k: v.channels for k, v in input_shape.items()}
-        self.cls_agnostic_bbox_reg    = cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG
-        self.smooth_l1_beta           = cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA
+        self.test_score_thresh = cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST
+        self.test_nms_thresh = cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST
+        self.test_detections_per_img = cfg.TEST.DETECTIONS_PER_IMAGE
+        self.in_features = cfg.MODEL.ROI_HEADS.IN_FEATURES
+        self.num_classes = cfg.MODEL.ROI_HEADS.NUM_CLASSES
+        self.proposal_append_gt = cfg.MODEL.ROI_HEADS.PROPOSAL_APPEND_GT
+        self.feature_strides = {k: v.stride for k, v in input_shape.items()}
+        self.feature_channels = {k: v.channels for k, v in input_shape.items()}
+        self.cls_agnostic_bbox_reg = cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG
+        self.smooth_l1_beta = cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA
         # fmt: on
 
         # Matcher to assign box proposals to gt boxes
@@ -214,11 +215,11 @@ class ROIHeads(torch.nn.Module):
                 # will filter the proposals again (by foreground/background,
                 # etc), so we essentially index the data twice.
                 for (
-                    trg_name,
-                    trg_value,
+                        trg_name,
+                        trg_value,
                 ) in targets_per_image.get_fields().items():
                     if trg_name.startswith(
-                        "gt_"
+                            "gt_"
                     ) and not proposals_per_image.has(trg_name):
                         proposals_per_image.set(
                             trg_name, trg_value[sampled_targets]
@@ -286,9 +287,9 @@ class Res5ROIHeads(ROIHeads):
 
         # fmt: off
         pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
-        pooler_type       = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
-        pooler_scales     = (1.0 / self.feature_strides[self.in_features[0]], )
-        sampling_ratio    = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+        pooler_scales = (1.0 / self.feature_strides[self.in_features[0]],)
+        sampling_ratio = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
         # fmt: on
         assert not cfg.MODEL.KEYPOINT_ON
 
@@ -308,12 +309,12 @@ class Res5ROIHeads(ROIHeads):
     def _build_res5_block(self, cfg):
         # fmt: off
         stage_channel_factor = 2 ** 3  # res5 is 8x res2
-        num_groups           = cfg.MODEL.RESNETS.NUM_GROUPS
-        width_per_group      = cfg.MODEL.RESNETS.WIDTH_PER_GROUP
-        bottleneck_channels  = num_groups * width_per_group * stage_channel_factor
-        out_channels         = cfg.MODEL.RESNETS.RES2_OUT_CHANNELS * stage_channel_factor
-        stride_in_1x1        = cfg.MODEL.RESNETS.STRIDE_IN_1X1
-        norm                 = cfg.MODEL.RESNETS.NORM
+        num_groups = cfg.MODEL.RESNETS.NUM_GROUPS
+        width_per_group = cfg.MODEL.RESNETS.WIDTH_PER_GROUP
+        bottleneck_channels = num_groups * width_per_group * stage_channel_factor
+        out_channels = cfg.MODEL.RESNETS.RES2_OUT_CHANNELS * stage_channel_factor
+        stride_in_1x1 = cfg.MODEL.RESNETS.STRIDE_IN_1X1
+        norm = cfg.MODEL.RESNETS.NORM
         assert not cfg.MODEL.RESNETS.DEFORM_ON_PER_STAGE[-1], \
             "Deformable conv is not yet supported in res5 head."
         # fmt: on
@@ -396,9 +397,9 @@ class StandardROIHeads(ROIHeads):
     def _init_box_head(self, cfg):
         # fmt: off
         pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
-        pooler_scales     = tuple(1.0 / self.feature_strides[k] for k in self.in_features)
-        sampling_ratio    = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
-        pooler_type       = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+        pooler_scales = tuple(1.0 / self.feature_strides[k] for k in self.in_features)
+        sampling_ratio = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
         # fmt: on
 
         # If StandardROIHeads is applied on multiple feature maps (as in FPN),

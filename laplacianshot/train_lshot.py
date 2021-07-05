@@ -26,8 +26,9 @@ from scipy import sparse
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
-from laplacianshot.utils import configuration
+from laplacianshot.images_manipulation import normalize_image
 from laplacianshot.lshot_update import bound_update
+from laplacianshot.utils import configuration
 
 best_prec1 = -1
 

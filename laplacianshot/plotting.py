@@ -1,11 +1,14 @@
 import os
 import time
 from os.path import join, exists
+from typing import List
+
+import numpy as np
 import pandas as pd
 
 import torch
+
 from sklearn.decomposition import PCA
-from pprint import pprint
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -86,3 +89,71 @@ def plot_distribution(distribution: torch.Tensor,
     sns.histplot(x=distribution, bins=20, ax=ax).set_title(f"Scatterplot {title.lower()}")
     ax.set_xlabel("")
     plt.savefig(join(folder, f"barplot_{title.lower().replace(' ', '_')}.png"))
+
+
+def plot_detections(img: torch.Tensor,
+                    boxes: torch.Tensor, confidences: torch.Tensor, labels: torch.Tensor,
+                    folder: str = "."):
+    if not exists(folder):
+        os.makedirs(folder)
+
+    # sets up the layout
+    fig = plt.figure(constrained_layout=True, figsize=(2 * 10,
+                                                       2 * (4 + 10)))
+    gs = fig.add_gridspec(4 + 10,
+                          10)
+
+    # plots the query image
+    img = (img / 255).float()
+    img = img[[2, 1, 0], :, :]
+    ax_query_image = fig.add_subplot(gs[:4, 3:7])
+    ax_query_image.set_title("query image")
+    ax_query_image.imshow(img.permute(1, 2, 0))
+
+    # loops over smaller boxes
+    x, y = 0, 4
+    for i_box, (box, confidence, label) in enumerate(zip(boxes, confidences, labels)):
+        if i_box >= 10 * 10:
+            break
+        # plots a detection
+        ax_box = fig.add_subplot(gs[y, x])
+        ax_box.set_title(f"label={label}\nconfidence={np.round(confidence.item() * 100, 2)}%")
+        img_crop = img[:,
+                   int(box[1]): int(box[3]),
+                   int(box[0]): int(box[2])]
+        ax_box.imshow(img_crop.permute(1, 2, 0))
+
+        # updates the cursor
+        x += 1
+        if x >= 10:
+            x, y = 0, y + 1
+
+    # saves the plot
+    plt.title(f"Example of query detections")
+    plt.savefig(join(folder, f"query_image_example.png"))
+
+def plot_supports(imgs: List[torch.Tensor],
+                  labels: torch.Tensor,
+                  folder: str = "."):
+    if not exists(folder):
+        os.makedirs(folder)
+
+    # sets up the layout
+    fig = plt.figure(constrained_layout=True, figsize=(2 * int(np.ceil(len(imgs) / len(labels.unique()))),
+                                                       2 * len(labels.unique()),))
+    gs = fig.add_gridspec(len(labels.unique()),
+                          int(np.ceil(len(imgs) / len(labels.unique()))))
+    # plots the query image
+    for i_label, label in enumerate(labels.unique()):
+        class_indices = (labels == label).nonzero().flatten().tolist()
+        for i_img, img in enumerate([img for i, img in enumerate(imgs)
+                                     if i in class_indices]):
+            img = (img / 255).float()
+            img = img[[2, 1, 0], :, :]
+            ax = fig.add_subplot(gs[i_label, i_img])
+            ax.set_title(f"label {label.item()}")
+            ax.imshow(img.permute(1, 2, 0))
+
+    # saves the plot
+    plt.title(f"Support samples")
+    plt.savefig(join(folder, f"supports_example.png"))
