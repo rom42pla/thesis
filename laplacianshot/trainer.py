@@ -2,11 +2,11 @@ import os
 import logging
 from typing import Optional
 from collections import OrderedDict
+from compress_pickle import dump, load
 
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torchvision import transforms as T
 
 from detectron2.data import MetadataCatalog
 from detectron2.structures import Instances, Boxes
@@ -105,7 +105,8 @@ class LaplacianTrainer(DefaultTrainer):
                                              use_laplacianshot=use_laplacianshot,
                                              rectify_prototypes=rectify_prototypes,
                                              embeddings_type=embeddings_type,
-                                             max_iters=max_iters)
+                                             max_iters=max_iters,
+                                             cfg=cfg)
             results[dataset_name] = results_i
             if comm.is_main_process():
                 assert isinstance(
@@ -129,7 +130,9 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                          use_laplacianshot: bool = True,
                          rectify_prototypes: bool = True,
                          embeddings_type: str = "embeddings",
-                         max_iters: Optional[int] = None):
+                         max_iters: Optional[int] = None,
+                         cfg=None,
+                         save_checkpoint: bool = True):
     assert isinstance(use_laplacianshot, bool)
     assert isinstance(embeddings_type, str)
     assert embeddings_type in {"embeddings", "probabilities"}
@@ -143,16 +146,22 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
 
     inputs_agg, outputs_agg = [], []
     X_s_embeddings, X_s_labels, X_s_imgs = [], [], []
+
+    test_score_thresh_original, test_detections_per_img_original = model.roi_heads.test_score_thresh, \
+                                                                   model.roi_heads.test_detections_per_img
     with inference_context(model), torch.no_grad():
 
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
         # ======= S U P P O R T
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
         if use_laplacianshot:
+            # sets the model for support predictions
+            model.roi_heads.test_score_thresh, model.roi_heads.test_detections_per_img = 0, 1
             for img_data in tqdm(dataloader_support.dataset.dataset, desc=f"Getting support data"):
                 # retrieves the full image
                 img = img_data["image"].to(model.device)  # torch.Size([3, H, W])
                 img_normalized = normalize_image(img=img, model=model)
+                # features = model.backbone(img.float().unsqueeze(0))
                 features = model.backbone(img_normalized.unsqueeze(0))
 
                 # retrieves data about found boxes
@@ -170,6 +179,13 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     ]
                     # retrieves embeddings and prediction scores
                     result = model.roi_heads(img_data, features, proposal)[0][0]
+                    # result = model.roi_heads._forward_box([features[f] for f in model.roi_heads.in_features],
+                    #                                       proposal)[0]
+                    if 0 in result.get_fields()["box_features"].shape:
+                        # print(result)
+                        print(proposal)
+                        # print([features[f] for f in model.roi_heads.in_features])
+                        exit()
                     if len(result.get(embeddings_key)) == 0:
                         continue
                     features = result.get(embeddings_key)[0].type(torch.half)
@@ -190,6 +206,9 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
         # ======= Q U E R Y
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
+        # resets the model
+        model.roi_heads.test_score_thresh, model.roi_heads.test_detections_per_img = test_score_thresh_original, \
+                                                                                     test_detections_per_img_original
         for i_query, inputs in tqdm(enumerate(dataloader_query), desc=f"Predicting query data", total=n_query_images):
             if max_iters and i_query >= max_iters:
                 break
@@ -246,6 +265,12 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             # collects predictions
             inputs_agg += inputs
             outputs_agg += outputs
+
+    # if save_checkpoint:
+    #     print(f"Compressing checkpoint")
+    #     dump(outputs_agg, "test.bz2")
+    #     outputs_agg = load("test.bz2")
+    #     print(f"Compression done")
 
     # evaluates the results
     if use_laplacianshot:

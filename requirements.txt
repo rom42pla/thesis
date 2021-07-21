@@ -16,6 +16,7 @@ opencv-python~=4.5.2.54
 lvis
 fvcore~=0.1.5.post20210617
 pandas==1.2.5
+compress_pickle==2.0.1
 git+https://github.com/facebookresearch/detectron2.git
 
 # ??
