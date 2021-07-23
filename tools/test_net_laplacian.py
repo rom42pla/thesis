@@ -68,10 +68,14 @@ def main(args):
     )
 
     res = LaplacianTrainer.test(cfg, model,
-                                use_laplacianshot=False,
+                                use_laplacianshot=True,
+                                use_classification_layer=True,
                                 rectify_prototypes=True,
-                                embeddings_type="embeddings",
-                                max_iters=None)
+                                leverage_classification=True,
+                                embeddings_type=None,
+                                max_iters=None,
+                                laplacianshot_logs=False,
+                                save_checkpoints=True)
 
     if comm.is_main_process():
         verify_results(cfg, res)

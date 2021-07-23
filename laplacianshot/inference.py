@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.metrics import f1_score
 
 import torch
+import torch.nn.functional as F
 
 from tqdm import tqdm
 
@@ -15,8 +16,10 @@ from laplacianshot.prototypes import get_prototypes_rectified, get_prototypes
 
 def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                    X_q_embeddings: torch.Tensor, X_q_labels_pred: torch.Tensor, X_q_pred_confidence: torch.Tensor,
+                   embeddings_are_probabilities: bool = False,
                    null_label: int = 20,
                    proto_rect: bool = True,
+                   leverage_classification: bool = True,
                    knn: int = None, lambda_factor: float = None,
                    logs: bool = True) -> torch.Tensor:
     # assures inputs are in the correct shape
@@ -36,6 +39,7 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     assert not lambda_factor or lambda_factor >= 0, f"lambda_factor must be None or >= 0 " \
                                                     f"but got {lambda_factor}"
     assert isinstance(proto_rect, bool)
+    assert isinstance(embeddings_are_probabilities, bool)
 
     plot_scatterplot(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
                      embeddings_q=X_q_embeddings,
@@ -51,12 +55,13 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
               f"with mean norm {np.linalg.norm(X_q_embeddings.float(), 2, 1).mean()} before normalization")
 
     # normalizes the vectors
-    mean = torch.mean(X_s_embeddings, dim=0)
-    X_s_embeddings = X_s_embeddings - mean
-    X_s_embeddings = X_s_embeddings / np.linalg.norm(X_s_embeddings, 2, 1)[:, None]
+    if not embeddings_are_probabilities:
+        mean = torch.mean(X_s_embeddings, dim=0)
+        X_s_embeddings = X_s_embeddings - mean
+        X_s_embeddings = X_s_embeddings / np.linalg.norm(X_s_embeddings, 2, 1)[:, None]
 
-    X_q_embeddings = X_q_embeddings - mean
-    X_q_embeddings = X_q_embeddings / np.linalg.norm(X_q_embeddings, 2, 1)[:, None]
+        X_q_embeddings = X_q_embeddings - mean
+        X_q_embeddings = X_q_embeddings / np.linalg.norm(X_q_embeddings, 2, 1)[:, None]
 
     if logs:
         print(f"X_s_embeddings ranges in [{X_s_embeddings.float().min()}, {X_s_embeddings.float().max()}] "
@@ -122,11 +127,12 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                                                            X_q_pred_confidence[X_q_non_null_indices]
 
     # leverages fc classification results
-    for i_embedding, (embedding, label, score) in enumerate(zip(X_q_embeddings,
-                                                                X_q_labels_pred,
-                                                                X_q_pred_confidence)):
-        X_q_embeddings[i_embedding] = (1 - score) * embedding + \
-                                      score * prototypes[label]
+    if leverage_classification:
+        for i_embedding, (embedding, label, score) in enumerate(zip(X_q_embeddings,
+                                                                    X_q_labels_pred,
+                                                                    X_q_pred_confidence)):
+            X_q_embeddings[i_embedding] = (1 - score) * embedding + \
+                                          score * prototypes[label]
 
     plot_scatterplot(embeddings_s=prototypes, labels_s=X_s_labels.unique(),
                      embeddings_q=X_q_embeddings,
@@ -143,7 +149,15 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     # predicts the labels
     if logs:
         print(f"Predicting {len(X_q_embeddings)} labels with Laplacianshot")
-    distance = np.linalg.norm(prototypes.numpy()[:, None, :] - X_q_embeddings.numpy(), 2, axis=-1)
+    if not embeddings_are_probabilities:
+        distance = np.linalg.norm(prototypes.numpy()[:, None, :] - X_q_embeddings.numpy(), 2, axis=-1)
+    else:
+        distance = np.zeros(shape=(len(prototypes), len(X_q_embeddings)), dtype=float)
+        for i_prototype, prototype in enumerate(prototypes):
+            for i_query, query in enumerate(X_q_embeddings):
+                prototype, query = F.log_softmax(prototype, dim=-1), F.softmax(query, dim=-1)
+                distance[i_prototype, i_query] = F.kl_div(prototype, query, reduction='batchmean')
+
     unary = distance.transpose() ** 2
     labels_pred = train_lshot.lshot_prediction_labels(knn=knn, lmd=lambda_factor,
                                                       X=X_q_embeddings, unary=unary,
