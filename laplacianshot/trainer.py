@@ -1,6 +1,7 @@
 import itertools
 import os
 import time
+from datetime import datetime
 from os.path import join, splitext, basename, exists, isfile
 import logging
 from copy import deepcopy
@@ -325,9 +326,6 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
 
     # evaluates the results using the classification layer
     if use_classification_layer:
-        starting_time = time.time()
-
-        evaluator._logger.info(f"Predicting labels using classification layer")
         evaluator.reset()
         for i_query, (input, output) in enumerate(zip(inputs_agg, outputs_agg)):
             evaluator.process([input], [output])
@@ -341,26 +339,15 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             ignore_index=True
         )
 
-        # records the times
-        times = times.append(
-            {
-                "phase": "model classification",
-                "time_from": int(starting_time),
-                "time_to": int(time.time()),
-                "time_elapsed": int(time.time() - starting_time)
-            },
-            ignore_index=True)
-
     # evaluates the results using laplacianshot
     if use_laplacianshot:
-        starting_time = time.time()
-
         combinations = itertools.product(
             [True, False] if not rectify_prototypes else [rectify_prototypes],
             [True, False] if not leverage_classification else [leverage_classification],
             ["embeddings", "probabilities"] if not embeddings_type else [embeddings_type]
         )
         for rectify_prototypes, leverage_classification, embeddings_type in combinations:
+            starting_time = time.time()
             evaluator._logger.info(f"Predicting labels with LaplacianShot using {embeddings_type}")
             embeddings_key = "box_features" if embeddings_type == "embeddings" else "pred_class_logits"
             X_q_labels_laplacian = laplacian_shot(
@@ -401,29 +388,59 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     "rectify_prototypes": rectify_prototypes,
                     "leverage_classification": leverage_classification,
                     "embeddings_type": embeddings_type,
+                    "time_from": int(starting_time),
+                    "time_to": int(time.time()),
+                    "time_elapsed": int(time.time() - starting_time),
                     **dict(evaluation_results)["bbox"]
                 },
                 ignore_index=True
             )
 
-        # records the times
-        times = times.append(
-            {
-                "phase": "laplacianshot classification",
-                "time_from": int(starting_time),
-                "time_to": int(time.time()),
-                "time_elapsed": int(time.time() - starting_time)
-            },
-            ignore_index=True)
+            # records the times
+            times = times.append(
+                {
+                    "phase": "laplacianshot classification",
+                    "time_from": int(starting_time),
+                    "time_to": int(time.time()),
+                    "time_elapsed": int(time.time() - starting_time)
+                },
+                ignore_index=True)
 
-    # print("Final results")
+    # =======#=======#=======#=======#=======#=======#=======#=======#=======
+    # ======= R E S U L T S
+    # =======#=======#=======#=======#=======#=======#=======#=======#=======
+
+    # records the times
+    times = times.append(
+        {
+            "phase": "total time",
+            "time_from": times["time_from"].min(),
+            "time_to": int(time.time()),
+            "time_elapsed": (time.time() - times["time_from"].min())
+        },
+        ignore_index=True)
+
+    # prints times
     evaluator._logger.info(f"Computation times")
     for column in ["time_from", "time_to"]:
         times[column] = pd.to_datetime(times[column], unit="s")
+        final_results[column] = pd.to_datetime(final_results[column], unit="s")
     print(times[["phase", "time_from", "time_to", "time_elapsed"]])
 
+    # prints final results
     evaluator._logger.info(f"Final results")
-    print(final_results.sort_values("AP", ascending=False))
+    final_results = final_results.sort_values("AP", ascending=False)
+    print(final_results)
+
+    # saves results to a .csv
+    if not max_iters:
+        results_folder = join(".", "results")
+        if not exists(results_folder):
+            os.makedirs(results_folder)
+        dt = datetime.fromtimestamp(time.time())
+        filename = f"{dt.strftime('%Y%m%d%H%M%S')}_{'_'.join([model_name, datasets_names])}_results.csv"
+        final_results.to_csv(join(results_folder, filename), index=False)
+        evaluator._logger.info(f"Results saved to {join(results_folder, filename)}")
 
     # An evaluator may return None when not in main process.
     # Replace it by an empty dict instead to make it easier for downstream code to handle

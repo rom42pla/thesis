@@ -70,10 +70,10 @@ def main(args):
     res = LaplacianTrainer.test(cfg, model,
                                 use_laplacianshot=True,
                                 use_classification_layer=True,
-                                rectify_prototypes=True,
-                                leverage_classification=True,
+                                rectify_prototypes=None,
+                                leverage_classification=None,
                                 embeddings_type=None,
-                                max_iters=None,
+                                max_iters=10,
                                 laplacianshot_logs=False,
                                 save_checkpoints=True)
 
