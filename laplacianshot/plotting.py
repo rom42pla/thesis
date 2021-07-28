@@ -132,6 +132,7 @@ def plot_detections(img: torch.Tensor,
     plt.title(f"Example of query detections")
     plt.savefig(join(folder, f"query_image_example.png"))
 
+
 def plot_supports(imgs: List[torch.Tensor],
                   labels: torch.Tensor,
                   folder: str = "."):
@@ -157,3 +158,33 @@ def plot_supports(imgs: List[torch.Tensor],
     # saves the plot
     plt.title(f"Support samples")
     plt.savefig(join(folder, f"supports_example.png"))
+
+
+def plot_supports_augmentations(imgs: List[torch.Tensor],
+                                labels: torch.Tensor,
+                                original_images_indices: List[int],
+                                folder: str = "."):
+    if not exists(folder):
+        os.makedirs(folder)
+
+    # sets up the layout
+    fig = plt.figure(constrained_layout=True, figsize=(2 * len(imgs) // len(original_images_indices),
+                                                       2 * len(original_images_indices),))
+    gs = fig.add_gridspec(len(original_images_indices),
+                          len(imgs) // len(original_images_indices))
+    # plots the query image
+    for i_row, i_img_original in enumerate(original_images_indices):
+        if i_row < len(original_images_indices) - 1:
+            imgs_in_row = imgs[i_img_original:original_images_indices[i_row+1]]
+        else:
+            imgs_in_row = imgs[i_img_original:]
+        for i_img, img in enumerate(imgs_in_row):
+            img = (img / 255).float()
+            img = img[[2, 1, 0], :, :]
+            ax = fig.add_subplot(gs[i_row, i_img])
+            # ax.set_title(f"label {label.item()}")
+            ax.imshow(img.permute(1, 2, 0))
+
+    # saves the plot
+    plt.title(f"Support samples")
+    plt.savefig(join(folder, f"supports_augmented_example.png"))

@@ -22,9 +22,9 @@ from tqdm import tqdm
 from fsdet.engine import DefaultTrainer
 from fsdet.evaluation import (COCOEvaluator, DatasetEvaluators, LVISEvaluator, PascalVOCDetectionEvaluator,
                               DatasetEvaluator, print_csv_format, inference_context)
-from laplacianshot.images_manipulation import normalize_image
+from laplacianshot.images_manipulation import normalize_image, apply_random_augmentation
 from laplacianshot.inference import laplacian_shot
-from laplacianshot.plotting import plot_detections, plot_supports
+from laplacianshot.plotting import plot_detections, plot_supports, plot_supports_augmentations
 
 
 class LaplacianTrainer(DefaultTrainer):
@@ -60,6 +60,7 @@ class LaplacianTrainer(DefaultTrainer):
 
     @classmethod
     def test(cls, cfg, model, evaluators=None,
+             support_augmentation: Optional[bool] = True,
              use_laplacianshot: bool = True,
              use_classification_layer: bool = True,
              rectify_prototypes: Optional[bool] = True,
@@ -110,6 +111,7 @@ class LaplacianTrainer(DefaultTrainer):
                                              dataloader_support=dataloader_support,
                                              dataloader_query=dataloader_query,
                                              evaluator=evaluator,
+                                             support_augmentation=support_augmentation,
                                              use_laplacianshot=use_laplacianshot,
                                              use_classification_layer=use_classification_layer,
                                              rectify_prototypes=rectify_prototypes,
@@ -139,6 +141,7 @@ class LaplacianTrainer(DefaultTrainer):
 
 
 def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
+                         support_augmentation: bool = True,
                          use_laplacianshot: bool = True,
                          use_classification_layer: bool = True,
                          rectify_prototypes: bool = True,
@@ -148,7 +151,9 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                          cfg=None,
                          save_checkpoints: bool = True,
                          laplacianshot_logs: bool = True):
-    assert isinstance(use_laplacianshot, bool)
+    assert not use_laplacianshot or isinstance(use_laplacianshot, bool)
+    assert not use_classification_layer or isinstance(use_classification_layer, bool)
+    assert not support_augmentation or isinstance(support_augmentation, bool)
     assert embeddings_type in {None, "embeddings", "probabilities"}
 
     assert use_laplacianshot or use_classification_layer
@@ -181,47 +186,80 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             starting_time = time.time()
             # sets the model for support predictions
             model.roi_heads.test_score_thresh, model.roi_heads.test_detections_per_img = 0, 1
+            original_images_indices = []
 
             for img_data in tqdm(dataloader_support.dataset.dataset, desc=f"Getting support data"):
-                # retrieves the full image
-                img = img_data["image"].to(model.device)  # torch.Size([3, H, W])
-                img_normalized = normalize_image(img=img, model=model)
-                # features = model.backbone(img.float().unsqueeze(0))
-                features = model.backbone(img_normalized.unsqueeze(0))
-
-                # retrieves data about found boxes
-                boxes_labels = img_data["instances"].get_fields()["gt_classes"].to(model.device)  # torch.Size([1])
-                boxes_coords = img_data["instances"].get_fields()["gt_boxes"].tensor.to(
-                    model.device)  # torch.Size([1, 4])
+                # retrieves data about found image and boxes
+                img_original = img_data["image"] \
+                    .to(model.device)  # torch.Size([3, H, W])
+                boxes_labels = img_data["instances"].get_fields()["gt_classes"] \
+                    .to(model.device)  # torch.Size([1])
+                boxes_coords = img_data["instances"].get_fields()["gt_boxes"].tensor \
+                    .to(model.device)  # torch.Size([1, 4])
 
                 # loops over found boxes
                 for box, label in zip(boxes_coords, boxes_labels):
-                    # creates the box proposal query for the classification
-                    proposal = [
-                        Instances(image_size=img.shape[-2:],
-                                  # objectness_logits=[torch.tensor([1], device=model.device)],
-                                  proposal_boxes=Boxes(box.unsqueeze(0)))
-                    ]
-                    # retrieves embeddings and prediction scores
-                    result = model.roi_heads(img_data, features, proposal)[0][0]
-                    if len(result.get("box_features")) == 0:
-                        continue
-                    features = result.get("box_features")[0].type(torch.half)
-                    scores = result.get("pred_class_logits")[0].type(torch.half)
+                    imgs = [img_original]
+                    # tracks non-augmented images
+                    original_images_indices += [len(X_s_embeddings)]
+                    # eventually data augments the image
+                    if support_augmentation is None or support_augmentation:
+                        for _ in range(10):
+                            imgs += [apply_random_augmentation(img=img_original)]
 
-                    # keeps relevant infos
-                    X_s_imgs += [img[:,
-                                 int(box[1]): int(box[3]),
-                                 int(box[0]): int(box[2])].cpu()]
-                    X_s_embeddings += [features.cpu()]
-                    X_s_probabilities += [scores.cpu()]
-                    X_s_labels += [label.cpu()]
+                    for i_img, img in enumerate(imgs):
+                        # print(f"Shape and box before: {img.shape}\t\t{box}")
+                        # normalizes the image
+                        img_normalized = normalize_image(img=img, model=model)
+                        # resizes the box according to the new size
+                        box_normalized = deepcopy(box)
+                        box_normalized[0] = (box_normalized[0] * img_normalized.shape[2]) / img.shape[2]
+                        box_normalized[2] = (box_normalized[2] * img_normalized.shape[2]) / img.shape[2]
+                        box_normalized[1] = (box_normalized[1] * img_normalized.shape[1]) / img.shape[1]
+                        box_normalized[3] = (box_normalized[3] * img_normalized.shape[1]) / img.shape[1]
+                        # adjusts img_data
+                        img_data_normalized = deepcopy(img_data)
+                        img_data_normalized["image"] = (
+                                (
+                                        (img_normalized + abs(img_normalized.min()))
+                                        / img_normalized.max()
+                                ) * 255).byte()
+                        img_data_normalized["instances"]._image_size = img_normalized.shape[1:]
+                        img_data_normalized["instances"].set("gt_boxes", [box_normalized])
+                        # creates the box proposal query for the classification
+                        proposal = [
+                            Instances(image_size=img_normalized.shape[-2:],
+                                      # objectness_logits=[torch.tensor([1], device=model.device)],
+                                      proposal_boxes=Boxes(box_normalized.unsqueeze(0)))
+                        ]
+                        features = model.backbone(img_normalized.unsqueeze(0))
+                        result = model.roi_heads(img_data, features, proposal)[0][0]
+                        if len(result.get("box_features")) == 0:
+                            continue
+                        features = result.get("box_features")[0].type(torch.half)
+                        scores = result.get("pred_class_logits")[0].type(torch.half)
+
+                        # keeps relevant infos
+                        X_s_imgs += [img[:,
+                                     int(box[1]): int(box[3]),
+                                     int(box[0]): int(box[2])].cpu()]
+                        X_s_embeddings += [features.cpu()]
+                        X_s_probabilities += [scores.cpu()]
+                        X_s_labels += [label.cpu()]
 
             X_s_embeddings, X_s_probabilities, X_s_labels = torch.stack(X_s_embeddings, dim=0), \
                                                             torch.stack(X_s_probabilities, dim=0), \
                                                             torch.stack(X_s_labels, dim=0)
 
-            plot_supports(imgs=X_s_imgs, labels=X_s_labels, folder="plots")
+            plot_supports(imgs=[X_s_img for i, X_s_img in enumerate(X_s_imgs)
+                                if i in original_images_indices],
+                          labels=X_s_labels[original_images_indices],
+                          folder="plots")
+            if support_augmentation:
+                plot_supports_augmentations(imgs=X_s_imgs,
+                                            labels=X_s_labels,
+                                            original_images_indices=original_images_indices,
+                                            folder="plots")
 
             # resets the model
             model.roi_heads.test_score_thresh, model.roi_heads.test_detections_per_img = test_score_thresh_original, \
@@ -342,18 +380,28 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
     # evaluates the results using laplacianshot
     if use_laplacianshot:
         combinations = itertools.product(
-            [True, False] if not rectify_prototypes else [rectify_prototypes],
-            [True, False] if not leverage_classification else [leverage_classification],
+            [True, False] if support_augmentation is None else [support_augmentation],
+            [True, False] if rectify_prototypes is None else [rectify_prototypes],
+            [True, False] if leverage_classification is None else [leverage_classification],
             ["embeddings", "probabilities"] if not embeddings_type else [embeddings_type]
         )
-        for rectify_prototypes, leverage_classification, embeddings_type in combinations:
+        for support_augmentation, rectify_prototypes, leverage_classification, embeddings_type in combinations:
             starting_time = time.time()
             evaluator._logger.info(f"Predicting labels with LaplacianShot using {embeddings_type}")
             embeddings_key = "box_features" if embeddings_type == "embeddings" else "pred_class_logits"
+
+            X_s_embeddings_run, X_s_labels_run = X_s_embeddings, \
+                                                 X_s_labels
+
+            if embeddings_type == "probabilities":
+                X_s_embeddings_run = X_s_probabilities
+
+            if not support_augmentation:
+                X_s_embeddings_run, X_s_labels_run = X_s_embeddings_run[original_images_indices],\
+                                                     X_s_labels[original_images_indices]
             X_q_labels_laplacian = laplacian_shot(
-                X_s_embeddings=(
-                    X_s_embeddings if embeddings_type == "embeddings" else X_s_probabilities).detach().clone(),
-                X_s_labels=X_s_labels.detach().clone(),
+                X_s_embeddings=X_s_embeddings_run.detach().clone(),
+                X_s_labels=X_s_labels_run.detach().clone(),
                 X_q_embeddings=torch.stack([field
                                             for instance_output in outputs_agg
                                             for field in instance_output["instances"].get_fields()[embeddings_key]]),
@@ -383,6 +431,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             evaluation_results = evaluator.evaluate()
             final_results = final_results.append(
                 {
+                    "support_augmentation": support_augmentation,
                     "use_classification_layer": use_classification_layer,
                     "use_laplacianshot": use_laplacianshot,
                     "rectify_prototypes": rectify_prototypes,
