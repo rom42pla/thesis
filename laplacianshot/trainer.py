@@ -8,6 +8,7 @@ from copy import deepcopy
 from typing import Optional
 from collections import OrderedDict
 
+import numpy as np
 import pandas as pd
 from compress_pickle import dump, load
 
@@ -199,15 +200,17 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
 
                 # loops over found boxes
                 for box, label in zip(boxes_coords, boxes_labels):
-                    imgs = [img_original]
+                    imgs, boxes = [img_original], [box]
                     # tracks non-augmented images
                     original_images_indices += [len(X_s_embeddings)]
                     # eventually data augments the image
                     if support_augmentation is None or support_augmentation:
-                        for _ in range(10):
-                            imgs += [apply_random_augmentation(img=img_original)]
+                        for _ in range(5):
+                            img_augmented, box_augmented = apply_random_augmentation(img=img_original, box=box)
+                            imgs += [img_augmented]
+                            boxes += [box_augmented]
 
-                    for i_img, img in enumerate(imgs):
+                    for i_img, (img, box) in enumerate(zip(imgs, boxes)):
                         # print(f"Shape and box before: {img.shape}\t\t{box}")
                         # normalizes the image
                         img_normalized = normalize_image(img=img, model=model)
@@ -240,9 +243,15 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                         scores = result.get("pred_class_logits")[0].type(torch.half)
 
                         # keeps relevant infos
-                        X_s_imgs += [img[:,
-                                     int(box[1]): int(box[3]),
-                                     int(box[0]): int(box[2])].cpu()]
+                        X_s_imgs += [
+                            img[:,
+                            int(box[1]): int(box[3]),
+                            int(box[0]): int(box[2]),
+                            ].cpu()]
+                        if X_s_imgs[-1].shape[1] == 0 or X_s_imgs[-1].shape[2] == 0:
+                            print(X_s_imgs[-1].shape, img.shape)
+                            print(box, box_normalized)
+                            exit()
                         X_s_embeddings += [features.cpu()]
                         X_s_probabilities += [scores.cpu()]
                         X_s_labels += [label.cpu()]
@@ -255,7 +264,8 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                                 if i in original_images_indices],
                           labels=X_s_labels[original_images_indices],
                           folder="plots")
-            if support_augmentation:
+
+            if support_augmentation is None or support_augmentation:
                 plot_supports_augmentations(imgs=X_s_imgs,
                                             labels=X_s_labels,
                                             original_images_indices=original_images_indices,
@@ -273,7 +283,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     "time_elapsed": int(time.time() - starting_time)
                 },
                 ignore_index=True)
-
+        exit()
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
         # ======= Q U E R Y
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
@@ -397,7 +407,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                 X_s_embeddings_run = X_s_probabilities
 
             if not support_augmentation:
-                X_s_embeddings_run, X_s_labels_run = X_s_embeddings_run[original_images_indices],\
+                X_s_embeddings_run, X_s_labels_run = X_s_embeddings_run[original_images_indices], \
                                                      X_s_labels[original_images_indices]
             X_q_labels_laplacian = laplacian_shot(
                 X_s_embeddings=X_s_embeddings_run.detach().clone(),

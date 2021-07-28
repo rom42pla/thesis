@@ -68,7 +68,7 @@ def main(args):
     )
 
     res = LaplacianTrainer.test(cfg, model,
-                                support_augmentation=None,
+                                support_augmentation=True,
                                 use_laplacianshot=True,
                                 use_classification_layer=True,
                                 rectify_prototypes=None,

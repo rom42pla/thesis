@@ -1,9 +1,12 @@
+from copy import deepcopy
+from typing import Optional
+
+import numpy as np
+
 import torch
+from torchvision import transforms as T
 
 from detectron2.structures import ImageList
-from torchvision import transforms as T
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 
 
 def normalize_image(img: torch.Tensor, model: torch.nn.Module, resize: bool = True):
@@ -26,7 +29,8 @@ def normalize_image(img: torch.Tensor, model: torch.nn.Module, resize: bool = Tr
     return img
 
 
-def apply_random_augmentation(img: torch.Tensor):
+def apply_random_augmentation(img: torch.Tensor,
+                              box: Optional[torch.Tensor] = None):
     transformations = T.Compose(
         [
             T.ColorJitter(brightness=0.3, saturation=0.2, hue=0.1),
@@ -35,7 +39,25 @@ def apply_random_augmentation(img: torch.Tensor):
             T.RandomEqualize(p=0.1)
         ]
     )
-    img_augmented = transformations(img)
-    # img_augmented = transformations(image=img.cpu().numpy())["image"] \
-    #     .permute(1, 2, 0).to(img.device)
-    return img_augmented
+    img_augmented, box_augmented = transformations(img), deepcopy(box)
+
+    # random horizontal flip
+    horizontal_flip = True if np.random.random() <= 0.5 else False
+    if horizontal_flip:
+        img_augmented = T.RandomHorizontalFlip(p=1)(img_augmented)
+
+        box_augmented[0], box_augmented[2] = img_augmented.shape[2] - box_augmented[2], \
+                                             img_augmented.shape[2] - box_augmented[0]
+
+    # random vertical flip
+    vertical_flip = True if np.random.random() <= 0.1 else False
+    if vertical_flip:
+        img_augmented = T.RandomVerticalFlip(p=1)(img_augmented)
+
+        box_augmented[1], box_augmented[3] = img_augmented.shape[1] - box_augmented[3], \
+                                             img_augmented.shape[1] - box_augmented[1]
+
+    if box is None:
+        return img_augmented
+    else:
+        return img_augmented, box_augmented
