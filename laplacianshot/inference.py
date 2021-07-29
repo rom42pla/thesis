@@ -2,10 +2,13 @@ import itertools
 from os.path import join
 
 import numpy as np
+from sklearn.decomposition import PCA
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score
 
 import torch
 import torch.nn.functional as F
+from sklearn.naive_bayes import GaussianNB
 
 from tqdm import tqdm
 
@@ -15,7 +18,8 @@ from laplacianshot.prototypes import get_prototypes_rectified, get_prototypes
 
 
 def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
-                   X_q_embeddings: torch.Tensor, X_q_labels_pred: torch.Tensor, X_q_pred_confidence: torch.Tensor,
+                   X_q_embeddings: torch.Tensor, X_q_labels_pred: torch.Tensor,
+                   X_q_pred_confidence: torch.Tensor, X_q_probabilties: torch.Tensor,
                    embeddings_are_probabilities: bool = False,
                    null_label: int = 20,
                    proto_rect: bool = True,
@@ -122,15 +126,21 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     X_q_non_null_indices = (X_q_labels_pred != null_label).nonzero().flatten()
 
     # discards prediction with null label
-    X_q_embeddings, X_q_labels_pred, X_q_pred_confidence = X_q_embeddings[X_q_non_null_indices], \
-                                                           X_q_labels_pred[X_q_non_null_indices], \
-                                                           X_q_pred_confidence[X_q_non_null_indices]
+    X_q_embeddings, X_q_labels_pred, X_q_pred_confidence, X_q_probabilties = X_q_embeddings[X_q_non_null_indices], \
+                                                                             X_q_labels_pred[X_q_non_null_indices], \
+                                                                             X_q_pred_confidence[X_q_non_null_indices], \
+                                                                             X_q_probabilties[X_q_non_null_indices]
 
     # leverages fc classification results
     if leverage_classification:
-        for i_embedding, (embedding, label, score) in enumerate(zip(X_q_embeddings,
-                                                                    X_q_labels_pred,
-                                                                    X_q_pred_confidence)):
+        for i_embedding, (embedding, label, score, probabilities) in enumerate(zip(X_q_embeddings,
+                                                                                   X_q_labels_pred,
+                                                                                   X_q_pred_confidence,
+                                                                                   X_q_probabilties)):
+            # for i_prototype, prototype in enumerate(prototypes):
+            #     X_q_embeddings[i_embedding] = (1 - probabilities[i_prototype]) * embedding + \
+            #                                   probabilities[i_prototype] * prototype
+
             X_q_embeddings[i_embedding] = (1 - score) * embedding + \
                                           score * prototypes[label]
 
@@ -150,7 +160,8 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     if logs:
         print(f"Predicting {len(X_q_embeddings)} labels with Laplacianshot")
     if not embeddings_are_probabilities:
-        distance = np.linalg.norm(prototypes.numpy()[:, None, :] - X_q_embeddings.numpy(), 2, axis=-1)
+        # distance = np.linalg.norm(prototypes.numpy()[:, None, :] - X_q_embeddings.numpy(), 2, axis=-1)
+        distance = torch.cdist(prototypes, X_q_embeddings, p=2).numpy()
     else:
         distance = np.zeros(shape=(len(prototypes), len(X_q_embeddings)), dtype=float)
         for i_prototype, prototype in enumerate(prototypes):
@@ -158,11 +169,11 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                 prototype, query = F.log_softmax(prototype, dim=-1), F.softmax(query, dim=-1)
                 distance[i_prototype, i_query] = F.kl_div(prototype, query, reduction='batchmean')
 
-    unary = distance.transpose() ** 2
     labels_pred = train_lshot.lshot_prediction_labels(knn=knn, lmd=lambda_factor,
-                                                      X=X_q_embeddings, unary=unary,
+                                                      X=X_q_embeddings, unary=distance.transpose() ** 2,
                                                       support_label=X_s_labels.unique().numpy(),
                                                       logs=logs)
+
 
     # prepares labels for both null and non-null predictions
     results = np.zeros(n_queries)

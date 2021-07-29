@@ -14,6 +14,7 @@ from compress_pickle import dump, load
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from detectron2.data import MetadataCatalog
 from detectron2.structures import Instances, Boxes
@@ -283,7 +284,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     "time_elapsed": int(time.time() - starting_time)
                 },
                 ignore_index=True)
-        exit()
+
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
         # ======= Q U E R Y
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
@@ -421,10 +422,17 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                 X_q_pred_confidence=torch.stack([field
                                                  for instance_output in outputs_agg
                                                  for field in instance_output["instances"].get_fields()["scores"]]),
+                X_q_probabilties=F.softmax(torch.stack([field
+                                                        for instance_output in outputs_agg
+                                                        for field in
+                                                        instance_output["instances"].get_fields()[
+                                                            "pred_class_logits"]]),
+                                           dim=-1),
                 proto_rect=rectify_prototypes,
                 leverage_classification=leverage_classification,
                 embeddings_are_probabilities=True if embeddings_type == "probabilities" else False,
                 knn=None, lambda_factor=None, logs=laplacianshot_logs)
+
             # evaluates the results
             evaluator.reset()
             cursor = 0

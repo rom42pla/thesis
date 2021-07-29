@@ -182,7 +182,7 @@ def plot_supports_augmentations(imgs: List[torch.Tensor],
             img = (img / 255).float()
             img = img[[2, 1, 0], :, :]
             ax = fig.add_subplot(gs[i_row, i_img])
-            # ax.set_title(f"label {label.item()}")
+            ax.set_title(f"shape {img.shape[2]} x {img.shape[1]}")
             ax.imshow(img.permute(1, 2, 0))
 
     # saves the plot
