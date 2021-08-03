@@ -623,9 +623,10 @@ def lshot_prediction_labels(X, unary, support_label,
     # print(f"knn = {knn}")
     # print(f"lmd = {lmd}")
     # print(f"X.shape = {X.shape}")
+    # print(f"W.shape = {W.shape}")
     # print(f"unary.shape = {unary.shape}")
     # print(f"support_label = {support_label}")
-
+    # exit()
     out = np.take(support_label, l)
     return out
 

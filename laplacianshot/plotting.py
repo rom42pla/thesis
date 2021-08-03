@@ -1,7 +1,7 @@
 import os
 import time
 from os.path import join, exists
-from typing import List
+from typing import List, Union, Optional
 
 import numpy as np
 import pandas as pd
@@ -43,6 +43,7 @@ def plot_scatterplot(embeddings_s: torch.Tensor, labels_s: torch.Tensor,
     ax.set_xlabel("")
     ax.set_ylabel("")
     plt.savefig(join(folder, f"scatterplot_{title.lower().replace(' ', '_')}.png"))
+    plt.close(fig)
 
 
 def plot_prototypes_difference(prototypes: torch.Tensor, prototypes_rectified: torch.Tensor,
@@ -75,20 +76,29 @@ def plot_prototypes_difference(prototypes: torch.Tensor, prototypes_rectified: t
         ax.set_xlabel("")
         ax.set_ylabel("")
     plt.savefig(join(folder, f"scatterplot_prototypes_differences.png"))
+    plt.close(fig)
 
 
-def plot_distribution(distribution: torch.Tensor,
+def plot_distribution(distribution: Union[list, torch.Tensor],
+                      bins: Optional[int] = None,
+                      label_x: str = "", label_y: str = "count",
                       title: str = None, folder: str = "."):
+    if isinstance(distribution, list):
+        distribution = torch.as_tensor(distribution)
     if not title:
         title = str(int(time.time()))
     if not exists(folder):
         os.makedirs(folder)
+    if not bins:
+        bins = len(distribution.unique())
 
     # plots the results
     fig, ax = plt.subplots(1, figsize=[10, 10])
-    sns.histplot(x=distribution, bins=20, ax=ax).set_title(f"Scatterplot {title.lower()}")
-    ax.set_xlabel("")
+    sns.histplot(x=distribution, bins=bins, ax=ax, palette="rocket").set_title(f"Barplot {title.lower()}")
+    ax.set_xlabel(label_x)
+    ax.set_ylabel(label_y)
     plt.savefig(join(folder, f"barplot_{title.lower().replace(' ', '_')}.png"))
+    plt.close(fig)
 
 
 def plot_detections(img: torch.Tensor,
@@ -131,6 +141,7 @@ def plot_detections(img: torch.Tensor,
     # saves the plot
     plt.title(f"Example of query detections")
     plt.savefig(join(folder, f"query_image_example.png"))
+    plt.close(fig)
 
 
 def plot_supports(imgs: List[torch.Tensor],
@@ -158,6 +169,7 @@ def plot_supports(imgs: List[torch.Tensor],
     # saves the plot
     plt.title(f"Support samples")
     plt.savefig(join(folder, f"supports_example.png"))
+    plt.close(fig)
 
 
 def plot_supports_augmentations(imgs: List[torch.Tensor],
@@ -188,3 +200,4 @@ def plot_supports_augmentations(imgs: List[torch.Tensor],
     # saves the plot
     plt.title(f"Support samples")
     plt.savefig(join(folder, f"supports_augmented_example.png"))
+    plt.close(fig)

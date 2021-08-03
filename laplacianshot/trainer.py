@@ -1,5 +1,6 @@
 import itertools
 import os
+import psutil
 import time
 from datetime import datetime
 from os.path import join, splitext, basename, exists, isfile
@@ -26,8 +27,11 @@ from fsdet.evaluation import (COCOEvaluator, DatasetEvaluators, LVISEvaluator, P
                               DatasetEvaluator, print_csv_format, inference_context)
 from laplacianshot.images_manipulation import normalize_image, apply_random_augmentation
 from laplacianshot.inference import laplacian_shot
-from laplacianshot.plotting import plot_detections, plot_supports, plot_supports_augmentations
+from laplacianshot.plotting import plot_detections, plot_supports, plot_supports_augmentations, plot_distribution
 
+def get_available_ram_gb():
+    memory = psutil.virtual_memory().available * (1024.0 ** -3)
+    return memory
 
 class LaplacianTrainer(DefaultTrainer):
     @classmethod
@@ -68,6 +72,8 @@ class LaplacianTrainer(DefaultTrainer):
              rectify_prototypes: Optional[bool] = True,
              leverage_classification: Optional[bool] = True,
              embeddings_type: Optional[str] = "embeddings",
+             knn: Optional[int] = 3,
+             lambda_factor: Optional[int] = 0.1,
              max_iters: Optional[int] = None,
              laplacianshot_logs: bool = True,
              save_checkpoints: bool = True):
@@ -119,6 +125,8 @@ class LaplacianTrainer(DefaultTrainer):
                                              rectify_prototypes=rectify_prototypes,
                                              leverage_classification=leverage_classification,
                                              embeddings_type=embeddings_type,
+                                             knn=knn,
+                                             lambda_factor=lambda_factor,
                                              max_iters=max_iters,
                                              cfg=cfg,
                                              save_checkpoints=save_checkpoints,
@@ -149,6 +157,8 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                          rectify_prototypes: bool = True,
                          leverage_classification: bool = True,
                          embeddings_type: Optional[str] = "embeddings",
+                         knn: Optional[int] = 3,
+                         lambda_factor: Optional[int] = 0.1,
                          max_iters: Optional[int] = None,
                          cfg=None,
                          save_checkpoints: bool = True,
@@ -371,6 +381,11 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     },
                     ignore_index=True)
 
+    plot_distribution(distribution=[
+        len(output["instances"].get_fields()["scores"])
+        for output in outputs_agg
+    ], label_x="detections", title=f"number of detections", folder="plots")
+
     final_results = pd.DataFrame()
 
     # evaluates the results using the classification layer
@@ -394,11 +409,19 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             [True, False] if support_augmentation is None else [support_augmentation],
             [True, False] if rectify_prototypes is None else [rectify_prototypes],
             [True, False] if leverage_classification is None else [leverage_classification],
-            ["embeddings", "probabilities"] if not embeddings_type else [embeddings_type]
+            ["embeddings", "probabilities"] if not embeddings_type else [embeddings_type],
+            [1] if not knn else [knn],
+            [0.1, 0.3, 0.5, 1.0, 1.5] if not lambda_factor else [lambda_factor]
         )
-        for support_augmentation, rectify_prototypes, leverage_classification, embeddings_type in combinations:
+        for support_augmentation, rectify_prototypes, leverage_classification, embeddings_type, knn, lambda_factor in combinations:
             starting_time = time.time()
             evaluator._logger.info(f"Predicting labels with LaplacianShot using {embeddings_type}")
+            evaluator._logger.info(f"support augmentation: {support_augmentation}")
+            evaluator._logger.info(f"rectify prototypes: {rectify_prototypes}")
+            evaluator._logger.info(f"leverage classification: {leverage_classification}")
+            evaluator._logger.info(f"knn: {knn}")
+            evaluator._logger.info(f"lambda factor: {lambda_factor}")
+            evaluator._logger.info(f"available RAM: {np.round(get_available_ram_gb(), 3)}GB")
             embeddings_key = "box_features" if embeddings_type == "embeddings" else "pred_class_logits"
 
             X_s_embeddings_run, X_s_labels_run = X_s_embeddings, \
@@ -431,7 +454,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                 proto_rect=rectify_prototypes,
                 leverage_classification=leverage_classification,
                 embeddings_are_probabilities=True if embeddings_type == "probabilities" else False,
-                knn=None, lambda_factor=None, logs=laplacianshot_logs)
+                knn=knn, lambda_factor=lambda_factor, logs=laplacianshot_logs)
 
             # evaluates the results
             evaluator.reset()
@@ -455,6 +478,8 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     "rectify_prototypes": rectify_prototypes,
                     "leverage_classification": leverage_classification,
                     "embeddings_type": embeddings_type,
+                    "knn": knn,
+                    "lambda_factor": lambda_factor,
                     "time_from": int(starting_time),
                     "time_to": int(time.time()),
                     "time_elapsed": int(time.time() - starting_time),
@@ -497,7 +522,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
     # prints final results
     evaluator._logger.info(f"Final results")
     final_results = final_results.sort_values("AP", ascending=False)
-    print(final_results)
+    print(final_results.drop(columns=["AP50", "AP75", "bAP", "bAP50", "bAP75", "nAP", "nAP50", "nAP75"]))
 
     # saves results to a .csv
     if not max_iters:

@@ -24,7 +24,7 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                    null_label: int = 20,
                    proto_rect: bool = True,
                    leverage_classification: bool = True,
-                   knn: int = None, lambda_factor: float = None,
+                   knn: int = 3, lambda_factor: float = 0.1,
                    logs: bool = True) -> torch.Tensor:
     # assures inputs are in the correct shape
     assert len(X_s_embeddings.shape) == 2, f"X_s_embeddings must have shape (n_samples, embeddings_size) " \
@@ -91,35 +91,35 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                      title=f"of prototypes and queries", folder=join(".", "plots"))
 
     # tunes lambda
-    if not lambda_factor or not knn:
-        lambda_factor_best, knn_best = None, None
-        scores = []
-        lambda_factors = [lambda_factor] if lambda_factor \
-            else np.linspace(start=0.1, stop=2, num=10, endpoint=True)
-        knns = [knn] if knn \
-            else np.linspace(start=1, stop=10, num=10, endpoint=True, dtype=int)
-        combinations = list(itertools.product(lambda_factors, knns))
-        for lambda_factor_try, knn_try in tqdm(combinations,
-                                               desc=f"Tuning hyperparameters"):
-            distance = np.linalg.norm(prototypes[:, None, :] - X_s_embeddings, 2, axis=-1)
-            unary = distance.transpose() ** 2
-
-            labels_pred_train = train_lshot.lshot_prediction_labels(knn=knn_try, lmd=lambda_factor_try,
-                                                                    X=X_s_embeddings.numpy(), unary=unary,
-                                                                    support_label=X_s_labels.unique().numpy(),
-                                                                    logs=False)
-            score = f1_score(y_true=X_s_labels, y_pred=labels_pred_train, average="macro")
-            if not scores or score > np.max(scores):
-                lambda_factor_best, knn_best = lambda_factor_try, knn_try
-            scores += [score]
-        if not lambda_factor:
-            lambda_factor = lambda_factor_best
-        if not knn:
-            knn = knn_best
-        if logs:
-            print(
-                f"Found parameters with best score {np.round(np.max(scores), 3)} (worst is {np.round(np.min(scores), 3)}):\n"
-                f"knn = {knn_best}\tlambda_factor = {np.round(lambda_factor_best, 3)}")
+    # if not lambda_factor or not knn:
+    #     lambda_factor_best, knn_best = None, None
+    #     scores = []
+    #     lambda_factors = [lambda_factor] if lambda_factor \
+    #         else np.linspace(start=0.1, stop=2, num=10, endpoint=True)
+    #     knns = [knn] if knn \
+    #         else np.linspace(start=1, stop=10, num=10, endpoint=True, dtype=int)
+    #     combinations = list(itertools.product(lambda_factors, knns))
+    #     for lambda_factor_try, knn_try in tqdm(combinations,
+    #                                            desc=f"Tuning hyperparameters"):
+    #         distance = np.linalg.norm(prototypes[:, None, :] - X_s_embeddings, 2, axis=-1)
+    #         unary = distance.transpose() ** 2
+    #
+    #         labels_pred_train = train_lshot.lshot_prediction_labels(knn=knn_try, lmd=lambda_factor_try,
+    #                                                                 X=X_s_embeddings.numpy(), unary=unary,
+    #                                                                 support_label=X_s_labels.unique().numpy(),
+    #                                                                 logs=False)
+    #         score = f1_score(y_true=X_s_labels, y_pred=labels_pred_train, average="macro")
+    #         if not scores or score > np.max(scores):
+    #             lambda_factor_best, knn_best = lambda_factor_try, knn_try
+    #         scores += [score]
+    #     if not lambda_factor:
+    #         lambda_factor = lambda_factor_best
+    #     if not knn:
+    #         knn = knn_best
+    #     if logs:
+    #         print(
+    #             f"Found parameters with best score {np.round(np.max(scores), 3)} (worst is {np.round(np.min(scores), 3)}):\n"
+    #             f"knn = {knn_best}\tlambda_factor = {np.round(lambda_factor_best, 3)}")
 
     # gets predictions with null label
     X_q_null_indices = (X_q_labels_pred == null_label).nonzero().flatten()
@@ -173,7 +173,6 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                                                       X=X_q_embeddings, unary=distance.transpose() ** 2,
                                                       support_label=X_s_labels.unique().numpy(),
                                                       logs=logs)
-
 
     # prepares labels for both null and non-null predictions
     results = np.zeros(n_queries)

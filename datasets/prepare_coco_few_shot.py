@@ -2,6 +2,13 @@ import argparse
 import json
 import os
 import random
+import re
+from os.path import exists, join
+from urllib.parse import unquote
+
+import requests
+from bs4 import BeautifulSoup
+from tqdm import tqdm
 
 
 def parse_args():
@@ -80,6 +87,42 @@ def get_save_path_seeds(path, cls, shots, seed):
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, prefix + '.json')
     return save_path
+
+
+def download_required_files():
+    if not exists(join("datasets", "cocosplit", "datasplit")):
+        os.makedirs(join("datasets", "cocosplit", "datasplit"))
+    for filename, url in [
+        ("5k.json", "http://dl.yf.io/fs-det/datasets/cocosplit/datasplit/5k.json"),
+        ("trainvalno5k.json", "http://dl.yf.io/fs-det/datasets/cocosplit/datasplit/trainvalno5k.json")
+    ]:
+        filepath = join("datasets", "cocosplit", "datasplit", filename)
+        if not exists(filepath):
+            print(f"Downloading {filename} to {filepath}")
+            download_file(filepath=filepath, url=url,
+                          large=True)
+
+    soup = BeautifulSoup(requests.get("http://dl.yf.io/fs-det/datasets/cocosplit/").content,
+                         "html.parser")
+    for link in tqdm(soup.find_all("a"), desc=f"Downloading other .json files to {join('datasets', 'cocosplit')}"):
+        if re.fullmatch(string=link["href"], pattern="full_box_[0-9]*shot_.*_trainval\.json"):
+            filename = unquote(link["href"])
+            filepath = join("datasets", "cocosplit", filename)
+            if not exists(filepath):
+                download_file(filepath=filepath, url=f"http://dl.yf.io/fs-det/datasets/cocosplit/{filename}",
+                              large=False)
+
+
+def download_file(filepath, url, large: bool = False):
+    if large:
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(filepath, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+    else:
+        with open(filepath, "wb") as fp:
+            fp.write(requests.get(url).content)
 
 
 if __name__ == '__main__':
@@ -166,6 +209,8 @@ if __name__ == '__main__':
         90: "toothbrush",
     }
     CLASS2ID = {v: k for k, v in ID2CLASS.items()}
+
+    download_required_files()
 
     args = parse_args()
     generate_seeds(args)
