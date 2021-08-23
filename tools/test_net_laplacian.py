@@ -27,6 +27,7 @@ torch.manual_seed(0)
 from fsdet.config import get_cfg, set_global_cfg
 from fsdet.engine import default_argument_parser, default_setup
 
+from detectron2.config import global_cfg
 import detectron2.utils.comm as comm
 import os
 from detectron2.checkpoint import DetectionCheckpointer
@@ -53,6 +54,7 @@ def main(args):
     cfg = setup(args)
 
     model = LaplacianTrainer.build_model(cfg)
+
     if args.eval_iter != -1:
         # load checkpoint at specified iteration
         ckpt_file = os.path.join(
@@ -68,17 +70,18 @@ def main(args):
     )
 
     res = LaplacianTrainer.test(cfg, model,
-                                support_augmentation=None,
-                                use_laplacianshot=True,
+                                support_augmentation=False,
                                 use_classification_layer=True,
-                                rectify_prototypes=True,
-                                leverage_classification=True,
+                                use_laplacianshot=False,
+                                rectify_prototypes=False,
+                                leverage_classification=False,
                                 embeddings_type="embeddings",
-                                knn=None,
-                                lambda_factor=None,
+                                knn=3,
+                                lambda_factor=0.1,
                                 max_iters=None,
                                 laplacianshot_logs=False,
-                                save_checkpoints=True)
+                                save_checkpoints=True,
+                                plots=False)
 
     if comm.is_main_process():
         verify_results(cfg, res)

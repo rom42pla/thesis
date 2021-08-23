@@ -24,3 +24,4 @@ SOLVER:
   CHECKPOINT_PERIOD: 1000
   WARMUP_ITERS: 10
 OUTPUT_DIR: "checkpoints/coco/faster_rcnn/faster_rcnn_R_101_FPN_ft_all_1shot"
+SEED: 0

@@ -1,6 +1,6 @@
 _BASE_: "../Base-RCNN-FPN.yaml"
 MODEL:
-  WEIGHTS: "checkpoints/lvis/faster_rcnn/faster_rcnn_R_101_FPN_cosine_combined/model_reset_combine.pth"
+  WEIGHTS: "checkpoints/lvis/combined_tfa_cos_101.pth"
   MASK_ON: False
   RESNETS:
     DEPTH: 101

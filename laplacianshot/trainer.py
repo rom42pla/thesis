@@ -73,9 +73,10 @@ class LaplacianTrainer(DefaultTrainer):
              leverage_classification: Optional[bool] = True,
              embeddings_type: Optional[str] = "embeddings",
              knn: Optional[int] = 3,
-             lambda_factor: Optional[int] = 0.1,
+             lambda_factor: Optional[float] = 0.1,
              max_iters: Optional[int] = None,
              laplacianshot_logs: bool = True,
+             plots: bool = False,
              save_checkpoints: bool = True):
         """
         Args:
@@ -130,7 +131,8 @@ class LaplacianTrainer(DefaultTrainer):
                                              max_iters=max_iters,
                                              cfg=cfg,
                                              save_checkpoints=save_checkpoints,
-                                             laplacianshot_logs=laplacianshot_logs)
+                                             laplacianshot_logs=laplacianshot_logs,
+                                             plots=plots)
             results[dataset_name] = results_i
             if comm.is_main_process():
                 assert isinstance(
@@ -162,6 +164,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                          max_iters: Optional[int] = None,
                          cfg=None,
                          save_checkpoints: bool = True,
+                         plots: bool = False,
                          laplacianshot_logs: bool = True):
     assert not use_laplacianshot or isinstance(use_laplacianshot, bool)
     assert not use_classification_layer or isinstance(use_classification_layer, bool)
@@ -190,7 +193,6 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
 
     times = pd.DataFrame()
     with inference_context(model), torch.no_grad():
-
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
         # ======= S U P P O R T
         # =======#=======#=======#=======#=======#=======#=======#=======#=======
@@ -201,16 +203,21 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             original_images_indices = []
 
             for img_data in tqdm(dataloader_support.dataset.dataset, desc=f"Getting support data"):
+                # print(img_data)
+
                 # retrieves data about found image and boxes
                 img_original = img_data["image"] \
                     .to(model.device)  # torch.Size([3, H, W])
                 boxes_labels = img_data["instances"].get_fields()["gt_classes"] \
-                    .to(model.device)  # torch.Size([1])
+                    .to(model.device)  # torch.Size([N])
                 boxes_coords = img_data["instances"].get_fields()["gt_boxes"].tensor \
-                    .to(model.device)  # torch.Size([1, 4])
+                    .to(model.device)  # torch.Size([N, 4])
+
+                # gt_boxes = torch.zeros_like(boxes_coords)
+                gt_boxes = []
 
                 # loops over found boxes
-                for box, label in zip(boxes_coords, boxes_labels):
+                for i_instance, (box, label) in enumerate(zip(boxes_coords, boxes_labels)):
                     imgs, boxes = [img_original], [box]
                     # tracks non-augmented images
                     original_images_indices += [len(X_s_embeddings)]
@@ -239,7 +246,10 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                                         / img_normalized.max()
                                 ) * 255).byte()
                         img_data_normalized["instances"]._image_size = img_normalized.shape[1:]
-                        img_data_normalized["instances"].set("gt_boxes", [box_normalized])
+
+                        gt_boxes = img_data_normalized["instances"].get("gt_boxes")
+                        gt_boxes.tensor[i_instance] = box_normalized
+                        img_data_normalized["instances"].set("gt_boxes", [box for box in gt_boxes.tensor])
                         # creates the box proposal query for the classification
                         proposal = [
                             Instances(image_size=img_normalized.shape[-2:],
@@ -271,12 +281,13 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                                                             torch.stack(X_s_probabilities, dim=0), \
                                                             torch.stack(X_s_labels, dim=0)
 
-            plot_supports(imgs=[X_s_img for i, X_s_img in enumerate(X_s_imgs)
-                                if i in original_images_indices],
-                          labels=X_s_labels[original_images_indices],
-                          folder="plots")
+            if plots:
+                plot_supports(imgs=[X_s_img for i, X_s_img in enumerate(X_s_imgs)
+                                    if i in original_images_indices],
+                              labels=X_s_labels[original_images_indices],
+                              folder="plots")
 
-            if support_augmentation is None or support_augmentation:
+            if plots and (support_augmentation is None or support_augmentation):
                 plot_supports_augmentations(imgs=X_s_imgs,
                                             labels=X_s_labels,
                                             original_images_indices=original_images_indices,
@@ -335,7 +346,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                             outputs[i_output][k] = v.to("cpu")
 
                 # plots a sample of detection
-                if i_query == 0:
+                if plots and i_query == 0:
                     plot_detections(img=inputs[0]["image"],
                                     boxes=outputs[0]["instances"].get_fields()["pred_boxes"].tensor,
                                     confidences=outputs[0]["instances"].get_fields()["scores"],
@@ -380,17 +391,18 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                         "time_elapsed": int(time.time() - starting_time)
                     },
                     ignore_index=True)
-
-    plot_distribution(distribution=[
-        len(output["instances"].get_fields()["scores"])
-        for output in outputs_agg
-    ], label_x="detections", title=f"number of detections", folder="plots")
+    if plots:
+        plot_distribution(distribution=[
+            len(output["instances"].get_fields()["scores"])
+            for output in outputs_agg
+        ], label_x="detections", title=f"number of detections", folder="plots")
 
     final_results = pd.DataFrame()
 
     # evaluates the results using the classification layer
     if use_classification_layer:
         evaluator.reset()
+        starting_time = time.time()
         for i_query, (input, output) in enumerate(zip(inputs_agg, outputs_agg)):
             evaluator.process([input], [output])
         evaluation_results = evaluator.evaluate()
@@ -398,6 +410,9 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             {
                 "use_classification_layer": use_classification_layer,
                 "use_laplacianshot": use_laplacianshot,
+                "time_from": int(starting_time),
+                "time_to": int(time.time()),
+                "time_elapsed": int(time.time() - starting_time),
                 **dict(evaluation_results)["bbox"]
             },
             ignore_index=True
@@ -410,7 +425,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
             [True, False] if rectify_prototypes is None else [rectify_prototypes],
             [True, False] if leverage_classification is None else [leverage_classification],
             ["embeddings", "probabilities"] if not embeddings_type else [embeddings_type],
-            [1] if not knn else [knn],
+            [1, 3, 5] if not knn else [knn],
             [0.1, 0.3, 0.5, 1.0, 1.5] if not lambda_factor else [lambda_factor]
         )
         for support_augmentation, rectify_prototypes, leverage_classification, embeddings_type, knn, lambda_factor in combinations:
@@ -454,7 +469,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                 proto_rect=rectify_prototypes,
                 leverage_classification=leverage_classification,
                 embeddings_are_probabilities=True if embeddings_type == "probabilities" else False,
-                knn=knn, lambda_factor=lambda_factor, logs=laplacianshot_logs)
+                knn=knn, lambda_factor=lambda_factor, logs=laplacianshot_logs, plots=plots)
 
             # evaluates the results
             evaluator.reset()

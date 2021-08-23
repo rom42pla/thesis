@@ -180,8 +180,8 @@ def plot_supports_augmentations(imgs: List[torch.Tensor],
         os.makedirs(folder)
 
     # sets up the layout
-    fig = plt.figure(constrained_layout=True, figsize=(2 * len(imgs) // len(original_images_indices),
-                                                       2 * len(original_images_indices),))
+    fig = plt.figure(constrained_layout=True, figsize=(len(imgs) // len(original_images_indices),
+                                                       len(original_images_indices),))
     gs = fig.add_gridspec(len(original_images_indices),
                           len(imgs) // len(original_images_indices))
     # plots the query image

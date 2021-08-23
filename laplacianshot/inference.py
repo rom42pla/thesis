@@ -25,6 +25,7 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
                    proto_rect: bool = True,
                    leverage_classification: bool = True,
                    knn: int = 3, lambda_factor: float = 0.1,
+                   plots: bool = False,
                    logs: bool = True) -> torch.Tensor:
     # assures inputs are in the correct shape
     assert len(X_s_embeddings.shape) == 2, f"X_s_embeddings must have shape (n_samples, embeddings_size) " \
@@ -45,12 +46,13 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     assert isinstance(proto_rect, bool)
     assert isinstance(embeddings_are_probabilities, bool)
 
-    plot_scatterplot(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
-                     embeddings_q=X_q_embeddings,
-                     title=f"before normalization", folder=join(".", "plots"))
-
-    plot_distribution(distribution=X_q_pred_confidence,
-                      title="Confidence of prediction", folder=join(".", "plots"))
+    if plots:
+        plot_scatterplot(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
+                         embeddings_q=X_q_embeddings,
+                         title=f"before normalization", folder=join(".", "plots"))
+    if plots:
+        plot_distribution(distribution=X_q_pred_confidence,
+                          title="Confidence of prediction", folder=join(".", "plots"))
 
     if logs:
         print(f"X_s_embeddings ranges in [{X_s_embeddings.float().min()}, {X_s_embeddings.float().max()}] "
@@ -75,9 +77,10 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
 
     n_queries = len(X_q_embeddings)
 
-    plot_scatterplot(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
-                     embeddings_q=X_q_embeddings,
-                     title=f"after normalization", folder=join(".", "plots"))
+    if plots:
+        plot_scatterplot(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
+                         embeddings_q=X_q_embeddings,
+                         title=f"after normalization", folder=join(".", "plots"))
 
     if proto_rect:
         prototypes = get_prototypes_rectified(embeddings_s=X_s_embeddings, labels_s=X_s_labels,
@@ -86,9 +89,10 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
     else:
         prototypes = get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels)
 
-    plot_scatterplot(embeddings_s=prototypes, labels_s=X_s_labels.unique(),
-                     embeddings_q=X_q_embeddings,
-                     title=f"of prototypes and queries", folder=join(".", "plots"))
+    if plots:
+        plot_scatterplot(embeddings_s=prototypes, labels_s=X_s_labels.unique(),
+                         embeddings_q=X_q_embeddings,
+                         title=f"of prototypes and queries", folder=join(".", "plots"))
 
     # tunes lambda
     # if not lambda_factor or not knn:
@@ -144,18 +148,20 @@ def laplacian_shot(X_s_embeddings: torch.Tensor, X_s_labels: torch.Tensor,
             X_q_embeddings[i_embedding] = (1 - score) * embedding + \
                                           score * prototypes[label]
 
-    plot_scatterplot(embeddings_s=prototypes, labels_s=X_s_labels.unique(),
-                     embeddings_q=X_q_embeddings,
-                     title=f"of prototypes and queries after leverage of induction",
-                     folder=join(".", "plots"))
+    if plots:
+        plot_scatterplot(embeddings_s=prototypes, labels_s=X_s_labels.unique(),
+                         embeddings_q=X_q_embeddings,
+                         title=f"of prototypes and queries after leverage of induction",
+                         folder=join(".", "plots"))
 
-    plot_prototypes_difference(prototypes=get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels),
-                               prototypes_rectified=get_prototypes_rectified(
-                                   embeddings_s=X_s_embeddings, labels_s=X_s_labels,
-                                   embeddings_q=X_q_embeddings, pseudolabels_q=X_q_labels_pred,
-                                   confidence_q=X_q_pred_confidence),
-                               labels=X_s_labels.unique(),
-                               folder=join(".", "plots"))
+    if plots:
+        plot_prototypes_difference(prototypes=get_prototypes(embeddings=X_s_embeddings, labels=X_s_labels),
+                                   prototypes_rectified=get_prototypes_rectified(
+                                       embeddings_s=X_s_embeddings, labels_s=X_s_labels,
+                                       embeddings_q=X_q_embeddings, pseudolabels_q=X_q_labels_pred,
+                                       confidence_q=X_q_pred_confidence),
+                                   labels=X_s_labels.unique(),
+                                   folder=join(".", "plots"))
     # predicts the labels
     if logs:
         print(f"Predicting {len(X_q_embeddings)} labels with Laplacianshot")

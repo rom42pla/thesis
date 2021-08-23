@@ -1,6 +1,6 @@
 _BASE_: "../../Base-RCNN-FPN.yaml"
 MODEL:
-  WEIGHTS: "checkpoints/pretrained_5shot.pth"
+  WEIGHTS: "checkpoints/voc/pretrained_5shot.pth"
   MASK_ON: False
   RESNETS:
     DEPTH: 101
@@ -19,17 +19,11 @@ DATASETS:
   TRAIN: ('voc_2007_trainval_all1_5shot',)
   TEST: ('voc_2007_test_all1',)
 SOLVER:
-#  IMS_PER_BATCH: 16
-#  IMS_PER_BATCH: 8
-#  BASE_LR: 0.001
-#  STEPS: (18000,)
-#  MAX_ITER: 20000
-#  CHECKPOINT_PERIOD: None
-#  WARMUP_ITERS: 0
+  IMS_PER_BATCH: 16
   BASE_LR: 0.001
-  STEPS: (7000,)
-  MAX_ITER: 100
-  CHECKPOINT_PERIOD: None
-  WARMUP_ITERS: 0
+  STEPS: (18000,)
+  MAX_ITER: 20000
+  CHECKPOINT_PERIOD: 1000
+  WARMUP_ITERS: 10
 OUTPUT_DIR: "checkpoints/voc/faster_rcnn/faster_rcnn_R_101_FPN_ft_normalized_all1_5shot_randnovel"
 SEED: 0

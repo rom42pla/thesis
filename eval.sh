@@ -1,24 +1,39 @@
-#python -m tools.train_net --num-gpus 1 \
-#  --config-file configs/PascalVOC-detection/split1/faster_rcnn_R_101_FPN_ft_all1_2shot.yaml
+SHOTS=1
+DATASET="voc"
 
-SHOTS=2
+for ARGUMENT in "$@"
+do
+    KEY=$(echo $ARGUMENT | cut -f1 -d=)
+    VALUE=$(echo $ARGUMENT | cut -f2 -d=)
 
-python -m tools.test_net_laplacian --num-gpus 1 \
-  --config-file configs/PascalVOC-detection/split1/faster_rcnn_R_101_FPN_ft_all1_${SHOTS}shot.yaml --eval-only
+    case "$KEY" in
+          --shots) SHOTS=${VALUE} ;;
+          --dataset) DATASET=${VALUE,,} ;;
+          *)
+    esac
+done
 
-#python -m tools.test_net_laplacian --num-gpus 1 \
-#  --config-file configs/COCO-detection/faster_rcnn_R_101_FPN_ft_all_${SHOTS}shot.yaml --eval-only
 
-#python -m tools.test_net --num-gpus 1 \
-#  --config-file configs/PascalVOC-detection/split1/faster_rcnn_R_101_FPN_ft_all1_2shot.yaml --eval-only
+case $DATASET in
+  "voc")
+    python -m tools.test_net_laplacian --num-gpus 1 \
+      --config-file configs/PascalVOC-detection/split1/faster_rcnn_R_101_FPN_ft_all1_${SHOTS}shot.yaml --eval-only
+    ;;
 
-#python -m tools.test_net --num-gpus 1 \
-#  --config-file configs/detr.yaml --eval-only
+  "coco")
+    python -m tools.test_net_laplacian --num-gpus 1 \
+      --config-file configs/COCO-detection/faster_rcnn_R_101_FPN_ft_all_${SHOTS}shot.yaml --eval-only
+    ;;
 
-#python3 tools/run_experiments.py --num-gpus 1 \
-#        --shots 2 3 5 10 \
-#        --seeds 0 30 \
-#        --split 1
+  "lvis")
+    python -m tools.test_net_laplacian --num-gpus 1 \
+      --config-file configs/LVIS-detection/faster_rcnn_R_101_FPN_cosine_combined_all.yaml --eval-only
 
-#python -m tools.train_net_detr --num-gpus 1 \
-#  --config-file configs/detr.yaml --eval-only
+    python -m tools.test_net_laplacian --num-gpus 1 \
+      --config-file configs/LVIS-detection/faster_rcnn_R_101_FPN_cosine_combined_all_norepeat.yaml --eval-only
+    ;;
+
+  *)
+    echo "Unknown dataset '${DATASET}'. Supported datasets are in {'voc', 'coco', 'lvis'}"
+    ;;
+esac

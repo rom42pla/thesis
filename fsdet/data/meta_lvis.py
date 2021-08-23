@@ -51,10 +51,10 @@ def load_filtered_lvis_json(
             )
         )
 
-    if dataset_name is not None and "train" in dataset_name:
-        assert global_cfg.MODEL.ROI_HEADS.NUM_CLASSES == len(
-            metadata["thing_classes"]
-        ), "NUM_CLASSES should match number of categories: ALL=1230, NOVEL=454"
+    # if dataset_name is not None and "train" in dataset_name:
+    #     assert global_cfg.MODEL.ROI_HEADS.NUM_CLASSES == len(
+    #         metadata["thing_classes"]
+    #     ), "NUM_CLASSES should match number of categories: ALL=1230, NOVEL=454"
 
     # sort indices for reproducible results
     img_ids = sorted(list(lvis_api.imgs.keys()))
@@ -97,16 +97,16 @@ def load_filtered_lvis_json(
             # the image_id we're looking at.
             assert anno["image_id"] == image_id
             obj = {"bbox": anno["bbox"], "bbox_mode": BoxMode.XYWH_ABS}
-            if global_cfg.MODEL.ROI_HEADS.NUM_CLASSES == 454:
-                # Novel classes only
-                if anno["category_id"] - 1 not in LVIS_CATEGORIES_NOVEL_IDS:
-                    continue
-                obj["category_id"] = metadata["class_mapping"][
-                    anno["category_id"] - 1
-                ]
-            else:
-                # Convert 1-indexed to 0-indexed
-                obj["category_id"] = anno["category_id"] - 1
+            # if global_cfg.MODEL.ROI_HEADS.NUM_CLASSES == 454:
+            #     # Novel classes only
+            #     if anno["category_id"] - 1 not in LVIS_CATEGORIES_NOVEL_IDS:
+            #         continue
+            #     obj["category_id"] = metadata["class_mapping"][
+            #         anno["category_id"] - 1
+            #     ]
+            # else:
+            # Convert 1-indexed to 0-indexed
+            obj["category_id"] = anno["category_id"] - 1
             objs.append(obj)
         record["annotations"] = objs
         dataset_dicts.append(record)
