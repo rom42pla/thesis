@@ -29,9 +29,11 @@ from laplacianshot.images_manipulation import normalize_image, apply_random_augm
 from laplacianshot.inference import laplacian_shot
 from laplacianshot.plotting import plot_detections, plot_supports, plot_supports_augmentations, plot_distribution
 
+
 def get_available_ram_gb():
     memory = psutil.virtual_memory().available * (1024.0 ** -3)
     return memory
+
 
 class LaplacianTrainer(DefaultTrainer):
     @classmethod
@@ -72,6 +74,8 @@ class LaplacianTrainer(DefaultTrainer):
              rectify_prototypes: Optional[bool] = True,
              leverage_classification: Optional[bool] = True,
              embeddings_type: Optional[str] = "embeddings",
+             do_pca: Optional[bool] = False,
+             remove_possibly_duplicates: Optional[bool] = False,
              knn: Optional[int] = 3,
              lambda_factor: Optional[float] = 0.1,
              max_iters: Optional[int] = None,
@@ -126,6 +130,8 @@ class LaplacianTrainer(DefaultTrainer):
                                              rectify_prototypes=rectify_prototypes,
                                              leverage_classification=leverage_classification,
                                              embeddings_type=embeddings_type,
+                                             do_pca=do_pca,
+                                             remove_possibly_duplicates=remove_possibly_duplicates,
                                              knn=knn,
                                              lambda_factor=lambda_factor,
                                              max_iters=max_iters,
@@ -156,9 +162,11 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                          support_augmentation: bool = True,
                          use_laplacianshot: bool = True,
                          use_classification_layer: bool = True,
-                         rectify_prototypes: bool = True,
-                         leverage_classification: bool = True,
+                         rectify_prototypes: Optional[bool] = True,
+                         leverage_classification: Optional[bool] = True,
                          embeddings_type: Optional[str] = "embeddings",
+                         do_pca: Optional[bool] = False,
+                         remove_possibly_duplicates: Optional[bool] = False,
                          knn: Optional[int] = 3,
                          lambda_factor: Optional[int] = 0.1,
                          max_iters: Optional[int] = None,
@@ -420,37 +428,49 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
 
     # evaluates the results using laplacianshot
     if use_laplacianshot:
-        combinations = itertools.product(
+        combinations = list(itertools.product(
             [True, False] if support_augmentation is None else [support_augmentation],
             [True, False] if rectify_prototypes is None else [rectify_prototypes],
             [True, False] if leverage_classification is None else [leverage_classification],
+            [True, False] if remove_possibly_duplicates is None else [remove_possibly_duplicates],
+            [True, False] if do_pca is None else [do_pca],
             ["embeddings", "probabilities"] if not embeddings_type else [embeddings_type],
             [1, 3, 5] if not knn else [knn],
             [0.1, 0.3, 0.5, 1.0, 1.5] if not lambda_factor else [lambda_factor]
-        )
-        for support_augmentation, rectify_prototypes, leverage_classification, embeddings_type, knn, lambda_factor in combinations:
+        ))
+        for i_combination, (support_augmentation, rectify_prototypes, leverage_classification,
+                            remove_possibly_duplicates, do_pca, embeddings_type, knn, lambda_factor) \
+                in enumerate(combinations):
             starting_time = time.time()
+            evaluator._logger.info(f"Trying combination {i_combination + 1} out of {len(combinations)} "
+                                   f"({np.round(((i_combination + 1) / len(combinations)) * 100, 1)}%)")
             evaluator._logger.info(f"Predicting labels with LaplacianShot using {embeddings_type}")
             evaluator._logger.info(f"support augmentation: {support_augmentation}")
             evaluator._logger.info(f"rectify prototypes: {rectify_prototypes}")
             evaluator._logger.info(f"leverage classification: {leverage_classification}")
+            evaluator._logger.info(f"remove possibly duplicates: {remove_possibly_duplicates}")
+            evaluator._logger.info(f"do PCA: {do_pca}")
             evaluator._logger.info(f"knn: {knn}")
             evaluator._logger.info(f"lambda factor: {lambda_factor}")
             evaluator._logger.info(f"available RAM: {np.round(get_available_ram_gb(), 3)}GB")
             embeddings_key = "box_features" if embeddings_type == "embeddings" else "pred_class_logits"
 
-            X_s_embeddings_run, X_s_labels_run = X_s_embeddings, \
+            X_s_embeddings_run, X_s_labels_run = X_s_probabilities.detach().clone() \
+                                                     if embeddings_type == "probabilities" \
+                                                     else X_s_embeddings.detach().clone(), \
                                                  X_s_labels
-
-            if embeddings_type == "probabilities":
-                X_s_embeddings_run = X_s_probabilities
 
             if not support_augmentation:
                 X_s_embeddings_run, X_s_labels_run = X_s_embeddings_run[original_images_indices], \
                                                      X_s_labels[original_images_indices]
+
+            X_q_ids = [[i] * len(instance_output["instances"])
+                       for i, instance_output in enumerate(outputs_agg)]
+            X_q_ids = [img_id for instances in X_q_ids for img_id in instances]
+
             X_q_labels_laplacian = laplacian_shot(
-                X_s_embeddings=X_s_embeddings_run.detach().clone(),
-                X_s_labels=X_s_labels_run.detach().clone(),
+                X_s_embeddings=X_s_embeddings_run,
+                X_s_labels=X_s_labels_run,
                 X_q_embeddings=torch.stack([field
                                             for instance_output in outputs_agg
                                             for field in instance_output["instances"].get_fields()[embeddings_key]]),
@@ -466,9 +486,12 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                                                         instance_output["instances"].get_fields()[
                                                             "pred_class_logits"]]),
                                            dim=-1),
+                X_q_ids=torch.as_tensor(X_q_ids),
                 proto_rect=rectify_prototypes,
                 leverage_classification=leverage_classification,
                 embeddings_are_probabilities=True if embeddings_type == "probabilities" else False,
+                do_pca=do_pca,
+                remove_possibly_duplicates=remove_possibly_duplicates,
                 knn=knn, lambda_factor=lambda_factor, logs=laplacianshot_logs, plots=plots)
 
             # evaluates the results
@@ -494,6 +517,8 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
                     "leverage_classification": leverage_classification,
                     "embeddings_type": embeddings_type,
                     "knn": knn,
+                    "remove_possibly_duplicates": remove_possibly_duplicates,
+                    "do_pca": do_pca,
                     "lambda_factor": lambda_factor,
                     "time_from": int(starting_time),
                     "time_to": int(time.time()),
@@ -537,6 +562,7 @@ def inference_on_dataset(model, dataloader_support, dataloader_query, evaluator,
     # prints final results
     evaluator._logger.info(f"Final results")
     final_results = final_results.sort_values("AP", ascending=False)
+    pd.set_option('display.max_rows', None)
     print(final_results.drop(columns=["AP50", "AP75", "bAP", "bAP50", "bAP75", "nAP", "nAP50", "nAP75"]))
 
     # saves results to a .csv

@@ -618,16 +618,22 @@ def lshot_prediction_labels(X, unary, support_label,
                             logs: bool = False):
     assert isinstance(logs, bool)
     W = create_affinity(X, knn)
+
     l = bound_update(unary, W, lmd, logs=logs)
 
     # print(f"knn = {knn}")
     # print(f"lmd = {lmd}")
     # print(f"X.shape = {X.shape}")
     # print(f"W.shape = {W.shape}")
+    # print(W.max(), W.min())
+    # print(W.toarray()[:5])
+    # from laplacianshot import plotting
+    # plotting.plot_distribution(np.tril(W_2).flatten().tolist(), folder=".", title="W_2 distribution")
     # print(f"unary.shape = {unary.shape}")
     # print(f"support_label = {support_label}")
     # exit()
     out = np.take(support_label, l)
+    # exit()
     return out
 
 
@@ -680,7 +686,6 @@ def metric_class_type(gallery, query, support_label, test_label, shot, train_mea
 
 def create_affinity(X, knn):
     N, D = X.shape
-    # print('Compute Affinity ')
     nbrs = NearestNeighbors(n_neighbors=knn).fit(X)
     dist, knnind = nbrs.kneighbors(X)
 

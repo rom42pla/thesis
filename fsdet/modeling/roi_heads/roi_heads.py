@@ -470,11 +470,13 @@ class StandardROIHeads(ROIHeads):
         box_features = self.box_pooler(
             features, [x.proposal_boxes for x in proposals]
         )
+        box_features_non_relu = nn.Sequential(*self.box_head.fcs)(torch.flatten(box_features, start_dim=1))
         box_features = self.box_head(box_features)
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
             box_features
         )
         # del box_features
+
 
         outputs = FastRCNNOutputs(
             self.box2box_transform,
@@ -493,6 +495,7 @@ class StandardROIHeads(ROIHeads):
                 self.test_detections_per_img
             )
             # adds boxes' embeddings to the results
+            # pred_instances[0].set("box_features", box_features_non_relu[indices])
             pred_instances[0].set("box_features", box_features[indices])
             # adds prediction's probabilities to the results
             pred_instances[0].set("pred_class_logits", pred_class_logits[indices])

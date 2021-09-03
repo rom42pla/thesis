@@ -1,0 +1,2 @@
+python datasets/prepare_voc_few_shot.py
+python datasets/prepare_coco_few_shot.py

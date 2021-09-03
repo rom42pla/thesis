@@ -101,6 +101,26 @@ def plot_distribution(distribution: Union[list, torch.Tensor],
     plt.close(fig)
 
 
+def plot_explained_variance(variances: Union[list, torch.Tensor],
+                            label_x: str = "principal components", label_y: str = "explained variance",
+                            title: str = None, folder: str = "."):
+    if isinstance(variances, list):
+        variances = torch.as_tensor(variances)
+    if not title:
+        title = str(int(time.time()))
+    if not exists(folder):
+        os.makedirs(folder)
+
+    # plots the results
+    fig, ax = plt.subplots(1, figsize=[10, 5])
+    sns.lineplot(y=variances, x=range(1, len(variances) + 1), ax=ax, palette="rocket").set_title(f"Lineplot {title.lower()}")
+    ax.set_xlabel(label_x)
+    ax.set_ylabel(label_y)
+    plt.ylim(0, 1)
+    plt.savefig(join(folder, f"lineplot_{title.lower().replace(' ', '_')}.png"))
+    plt.close(fig)
+
+
 def plot_detections(img: torch.Tensor,
                     boxes: torch.Tensor, confidences: torch.Tensor, labels: torch.Tensor,
                     folder: str = "."):
@@ -187,7 +207,7 @@ def plot_supports_augmentations(imgs: List[torch.Tensor],
     # plots the query image
     for i_row, i_img_original in enumerate(original_images_indices):
         if i_row < len(original_images_indices) - 1:
-            imgs_in_row = imgs[i_img_original:original_images_indices[i_row+1]]
+            imgs_in_row = imgs[i_img_original:original_images_indices[i_row + 1]]
         else:
             imgs_in_row = imgs[i_img_original:]
         for i_img, img in enumerate(imgs_in_row):

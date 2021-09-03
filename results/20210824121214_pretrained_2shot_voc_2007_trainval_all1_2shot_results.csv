@@ -1,0 +1,2 @@
+AP,AP50,AP75,bAP,bAP50,bAP75,embeddings_type,knn,lambda_factor,leverage_classification,nAP,nAP50,nAP75,rectify_prototypes,support_augmentation,time_elapsed,time_from,time_to,use_classification_layer,use_laplacianshot
+42.74707241485554,68.35406822332675,46.12646073253153,49.504112220180325,78.80258873886478,53.35243435396259,embeddings,3.0,0.1,1.0,22.475952998881173,37.00850667671274,24.448539868238306,1.0,0.0,66.0,2021-08-24 10:11:07,2021-08-24 10:12:13,0.0,1.0
